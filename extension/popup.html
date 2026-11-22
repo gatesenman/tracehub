@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>拾迹页签快照</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>拾迹 TraceHub</h1>
+    <p class="sub">保存<strong>当前已打开</strong>的页签，不是浏览历史。</p>
+  </header>
+  <div id="status" class="status">正在检测本机应用…</div>
+  <div id="preview" class="preview"></div>
+  <div class="actions">
+    <button id="btnSave" class="primary" disabled>保存页签快照到本机</button>
+    <button id="btnRefresh">刷新预览</button>
+  </div>
+  <p class="hint">
+    保存成功后，请到 TraceHub 应用查看、分组、选择性恢复。
+    <strong>默认不会关闭任何页签。</strong>
+    只有你在应用里确认（并勾选未保存表单风险）后，扩展才会用官方页签接口逐个关闭，不会强杀浏览器。
+    扩展关闭可能无法弹出网页自己的“未保存”对话框。
+  </p>
+  <p class="hint">不能恢复原页面的登录状态、未提交表单或滚动位置。Firefox 本轮请用应用内的「导入 JSON」。</p>
+  <p class="hint"><a href="options.html" target="_blank">打开选项：填写配对令牌</a></p>
+  <script src="popup.js"></script>
+</body>
+</html>

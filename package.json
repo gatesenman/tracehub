@@ -1,0 +1,80 @@
+{
+  "name": "browser-history-hub",
+  "version": "1.2.2",
+  "description": "拾迹 TraceHub：多浏览器历史、页签快照工作区、AI 搜索与整理",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check-js.js",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "pack:win": "electron-builder --win nsis portable --x64",
+    "smoke": "node scripts/smoke.js",
+    "selftest": "electron . --self-test"
+  },
+  "author": "TraceHub",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "@noble/hashes": "^1.8.0",
+    "electron": "^31.7.7",
+    "electron-builder": "^26.15.3",
+    "@electron/rebuild": "^4.0.4"
+  },
+  "build": {
+    "appId": "com.tracehub.app",
+    "productName": "TraceHub",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "README.md",
+      "CHANGELOG.md"
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "artifactName": "TraceHub-${version}-setup.exe"
+    },
+    "portable": {
+      "artifactName": "TraceHub-${version}-portable.exe"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**",
+      "node_modules/sql.js/**",
+      "src/main/history-worker.js"
+    ],
+    "extraResources": [
+      {
+        "from": "extension",
+        "to": "extension"
+      }
+    ],
+    "afterPack": "./scripts/after-pack-win-native.js",
+    "directories": {
+      "output": "dist-win"
+    }
+  }
+}

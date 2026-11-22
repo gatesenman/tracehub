@@ -1,0 +1,16 @@
+node_modules/
+dist/
+dist-win/
+*.exe
+*.zip
+userData/
+thumbs/
+backups/
+hub.sqlite
+hub.sqlite-*
+config.json
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db

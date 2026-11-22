@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "拾迹 TraceHub 页签快照",
+  "version": "1.2.2",
+  "description": "把当前已打开的页签保存到本机 TraceHub。只有快照成功保存并经你在应用中确认后，才会关闭页签。不读取 Cookie、密码或浏览历史。",
+  "permissions": [
+    "tabs",
+    "storage",
+    "tabGroups",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "拾迹：保存已打开的页签",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}

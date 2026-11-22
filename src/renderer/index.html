@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' https: data: file:;" />
+  <title>拾迹 TraceHub</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 64 64" width="26" height="26">
+        <defs>
+          <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#6c8cff"/><stop offset="1" stop-color="#9b6cff"/>
+          </linearGradient>
+        </defs>
+        <rect x="3" y="3" width="58" height="58" rx="14" fill="url(#lg)"/>
+        <path d="M15 49 C 15 37, 29 40, 31 30 C 33 22, 24 20, 26 15"
+              fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-dasharray="0.1 9"/>
+        <path d="M44 12 l3.1 6.2 6.8 1 -4.9 4.8 1.2 6.8 -6.2 -3.2 -6.2 3.2 1.2 -6.8 -4.9 -4.8 6.8 -1 z" fill="#ffd257"/>
+        <circle cx="15" cy="50.5" r="4" fill="#fff"/>
+      </svg>
+      <span>拾迹 TraceHub</span>
+    </div>
+    <div class="search">
+      <input id="searchInput" type="text" placeholder="输入即搜，支持：昨天 xx / 近7天 xx / site:域名 xx　Ctrl+K 命令面板" />
+      <div class="btn-group">
+        <button id="btnAI" class="icon-btn ai" title="AI：有关键词时语义搜索，留空时打开历史问答"></button>
+      </div>
+    </div>
+    <div class="actions">
+      <div class="btn-group">
+        <button class="icon-btn tab" data-tab="categories" title="分类"></button>
+        <button class="icon-btn tab" data-tab="bookmarks" title="收藏"></button>
+        <button class="icon-btn tab" data-tab="report" title="报告"></button>
+        <button class="icon-btn tab" data-tab="snapshots" title="页签快照 / 关机前整理"></button>
+      </div>
+      <select id="browserFilter" title="按浏览器筛选"></select>
+      <div class="btn-group">
+        <button id="btnDaySummary" class="icon-btn ai" title="AI 每日摘要：一句话总结当天看了什么（再点收起）"></button>
+        <button id="btnCopyMd" class="icon-btn" title="复制当天的 Markdown 阅读日志，可直接粘进 Obsidian / 笔记"></button>
+        <button id="btnOrganize" class="icon-btn ai" title="AI 整理：自动分类打标签"></button>
+        <button id="btnSync" class="icon-btn" title="立即从所有浏览器同步"></button>
+        <button id="btnExport" class="icon-btn" title="导出全部历史 (CSV/JSON)"></button>
+      </div>
+      <div class="btn-group">
+        <button id="btnPrivacy" class="icon-btn" title="隐私暂停：暂停期间的访问不会被记录"></button>
+        <button id="btnTheme" class="icon-btn" title="切换浅色/深色主题"></button>
+        <button id="btnSettings" class="icon-btn" title="AI / 阅读接口 / 同步设置"></button>
+      </div>
+    </div>
+  </header>
+
+
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="tabs">
+        <button class="tab active" data-tab="today">今日</button>
+        <button class="tab" data-tab="timeline">时间树</button>
+      </div>
+      <div class="panel hidden" id="panel-today">
+        <div class="side-hint">点小时查看该时段记录</div>
+        <div class="hour-list" id="tdHours"></div>
+      </div>
+      <div class="panel" id="panel-timeline">
+        <div class="days" id="daysList"></div>
+      </div>
+      <div class="panel hidden" id="panel-categories">
+        <div class="side-title"><span class="side-back" title="返回时间树">←</span>分类</div>
+        <input id="catFilter" class="side-filter" type="text" placeholder="模糊搜索分类…" autocomplete="off" />
+        <div class="cats" id="catsList"></div>
+      </div>
+      <div class="panel hidden" id="panel-bookmarks">
+        <div class="side-title"><span class="side-back" title="返回时间树">←</span>收藏夹</div>
+        <input id="bmFilter" class="side-filter" type="text" placeholder="模糊搜索收藏…" autocomplete="off" />
+        <div class="side-hint">把右侧卡片拖到文件夹即可归类；右键文件夹可重命名/删除</div>
+        <div class="cats" id="bmList"></div>
+      </div>
+      <div class="panel hidden" id="panel-report">
+        <div class="side-title"><span class="side-back" title="返回时间树">←</span>报告</div>
+        <div class="side-hint">选择报告周期，报告与智能合集显示在右侧</div>
+        <div class="side-actions">
+          <button id="rp7">近 7 天报告</button>
+          <button id="rp30">近 30 天报告</button>
+          <button id="rpColl">生成智能合集</button>
+        </div>
+      </div>
+      <div class="panel hidden" id="panel-snapshots">
+        <div class="side-title"><span class="side-back" title="返回时间树">←</span>页签快照</div>
+        <div class="side-hint">保存的是浏览器里真实打开的页签，不是浏览历史。点右侧一键整理或用扩展保存。</div>
+        <div class="side-actions">
+          <button id="snapRefresh">刷新列表</button>
+          <button id="snapImport">导入 JSON</button>
+        </div>
+        <div class="cats" id="snapList"></div>
+      </div>
+    </aside>
+
+    <section class="content">
+      <div id="contentHeader" class="content-header"></div>
+      <div id="statsBox" class="stats-box hidden"></div>
+      <div id="summaryBox" class="summary-box hidden"></div>
+      <div id="contentBody" class="content-body"></div>
+    </section>
+  </main>
+
+  <div id="settingsModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>设置</h3>
+      <div class="cfg-section">AI 大模型</div>
+      <label>提供商</label>
+      <select id="cfgProvider"></select>
+      <label>接口地址 (OpenAI 兼容 baseUrl)</label>
+      <input id="cfgBaseUrl" type="text" placeholder="https://api.openai.com/v1" />
+      <label>模型</label>
+      <input id="cfgModel" type="text" placeholder="gpt-4o-mini" />
+      <label>API Key <span id="keyState" class="muted"></span></label>
+      <input id="cfgApiKey" type="password" placeholder="留空则使用本地关键词/规则（离线可用）" />
+      <div class="test-row">
+        <button id="cfgTest">测试连接</button>
+        <button id="cfgClearKey">清除已保存的密钥</button>
+        <span id="testResult" class="muted"></span>
+      </div>
+      <div class="cfg-section">网页理解（Jina Reader）</div>
+      <label class="check-row"><input id="cfgReaderEnabled" type="checkbox" /> 启用第三方正文提取，提高 AI 总结质量</label>
+      <label>Jina Key（可选，提高限额）<span id="jinaState" class="muted"></span></label>
+      <input id="cfgJinaKey" type="password" placeholder="可留空" />
+      <div class="cfg-section">后台采集（默认关闭）</div>
+      <label class="check-row"><input id="cfgThumbs" type="checkbox" /> 自动截取访问过的网页缩略图（会在隐藏窗口中重新打开该网址）</label>
+      <label class="check-row"><input id="cfgContentFetch" type="checkbox" /> 自动抓取网页正文做离线快照（会访问该网址；启用 Jina 时还会把网址发给第三方）</label>
+      <p class="muted">隐私暂停期间，上述后台采集也会停止。首次使用需在引导页勾选要同步的浏览器。</p>
+      <div class="cfg-section">同步</div>
+      <label>允许读取历史的浏览器配置（未勾选的不会再导入）</label>
+      <div id="cfgProfiles" class="onboard-browsers"></div>
+      <label>轮询兜底间隔（毫秒，文件监听已即时触发同步）</label>
+      <input id="cfgInterval" type="number" min="1000" step="1000" />
+      <div class="cfg-section">隐私</div>
+      <label>域名黑名单（每行一个，不再记录并删除已有记录）</label>
+      <textarea id="cfgBlacklist" rows="3" placeholder="example.com"></textarea>
+      <label class="check-row"><input id="cfgWeeklyNotify" type="checkbox" /> 每周推送阅读摘要桌面通知</label>
+      <div class="cfg-section">系统</div>
+      <label class="check-row"><input id="cfgAutoLaunch" type="checkbox" /> 开机自动启动（安装版生效）</label>
+      <label class="check-row"><input id="cfgStartMin" type="checkbox" /> 启动时最小化到系统托盘</label>
+      <label class="check-row"><input id="cfgMinTray" type="checkbox" /> 点最小化按钮时隐藏到托盘（不占任务栏）</label>
+      <label class="check-row"><input id="cfgCloseTray" type="checkbox" /> 点关闭按钮时最小化到托盘（取消则直接退出）</label>
+      <div class="cfg-section">显示</div>
+      <label class="check-row"><input id="cfgShowTags" type="checkbox" /> 在记录中显示关键词标签</label>
+      <label class="check-row"><input id="cfgShowStats" type="checkbox" /> 顶部显示每日统计面板（访问数 / Top 站点）</label>
+      <div class="cfg-section">专注提醒</div>
+      <label>时间黑洞提醒阈值（单站单日停留分钟数，0 关闭）</label>
+      <input id="cfgBlackhole" type="number" min="0" step="10" />
+      <div class="cfg-section">数据维护</div>
+      <div class="test-row">
+        <button id="cfgPurgeNoise">一键净化历史</button>
+        <button id="cfgRestoreNoise">恢复已净化</button>
+        <span id="noiseState" class="muted"></span>
+      </div>
+      <p class="muted">净化会隐藏搜索结果页、登录/跳转页等噪音记录（可随时恢复，不删除数据）</p>
+      <div class="test-row">
+        <button id="cfgBackupNow">立即备份</button>
+        <button id="cfgBackupRestore">从备份恢复…</button>
+        <span id="backupState" class="muted"></span>
+      </div>
+      <p class="muted">每天自动备份数据库（保留最近 14 份）；恢复后应用会自动重启</p>
+      <div class="cfg-section">页签快照桥接（仅 127.0.0.1）</div>
+      <p class="muted">与 Chrome / Edge 扩展配对。扩展用官方 tabs API 读取已打开页签，不读 Cookie 和密码。本轮不覆盖 Firefox 活动页签（可用 JSON 导入）。</p>
+      <div class="test-row">
+        <button id="cfgOpenExt">打开扩展目录</button>
+        <button id="cfgCopyToken">复制配对令牌</button>
+        <button id="cfgRegenToken">重新生成令牌</button>
+        <span id="bridgeState" class="muted"></span>
+      </div>
+      <label>配对令牌</label>
+      <input id="cfgBridgeToken" type="text" readonly />
+      <label>端口</label>
+      <input id="cfgBridgePort" type="number" min="1024" step="1" />
+      <div class="modal-actions">
+        <button id="cfgCancel">取消</button>
+        <button id="cfgSave" class="primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="palette" class="palette hidden">
+    <div class="palette-card">
+      <input id="paletteInput" type="text" placeholder="输入过滤命令…  (Esc 关闭，Enter 执行首条；搜索请用顶部搜索框)" autocomplete="off" />
+      <div id="paletteResults" class="palette-results"></div>
+    </div>
+  </div>
+
+  <div id="sessionModal" class="modal hidden">
+    <div class="modal-card small">
+      <h3>会话恢复</h3>
+      <p class="muted" id="sessionInfo"></p>
+      <div id="sessionList" class="session-list"></div>
+      <div class="modal-actions">
+        <button id="sessCancel">取消</button>
+        <button id="sessOpen" class="primary">全部重新打开</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="askModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>历史问答 <span class="muted">基于你的浏览记录回答</span></h3>
+      <div id="askLog" class="ask-log"></div>
+      <div class="ask-input-row">
+        <input id="askInput" type="text" placeholder="例如：我上周看过哪些关于 Rust 的文章？" autocomplete="off" />
+        <button id="askSend" class="primary">发送</button>
+      </div>
+      <div class="modal-actions">
+        <button id="askClose">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="curateModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>AI 整理今日历史 → 收藏夹 <span class="muted" id="curateInfo"></span></h3>
+      <div class="test-row">
+        <button id="curateToggle">全选 / 全不选</button>
+        <span class="muted">勾选要收藏的页面，可修改文件夹名，确认后直接入收藏夹</span>
+      </div>
+      <div id="curateList" class="session-list curate-list"></div>
+      <div class="modal-actions">
+        <button id="curateCancel">取消</button>
+        <button id="curateApply" class="primary">收藏选中项</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="exportModal" class="modal hidden">
+    <div class="modal-card small">
+      <h3>导出历史</h3>
+      <p class="muted">导出全部访问记录（含标题、描述、AI 总结、关键词、分类）</p>
+      <div class="modal-actions">
+        <button id="expCancel">取消</button>
+        <button id="expCsv" class="primary">CSV</button>
+        <button id="expJson" class="primary">JSON</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="snapshotModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>页面快照时光机 <span class="muted" id="snapshotInfo"></span></h3>
+      <div id="snapshotBody" class="snapshot-body"></div>
+      <div class="modal-actions">
+        <button id="snapshotOpen">打开原网页</button>
+        <button id="snapshotClose" class="primary">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="traceModal" class="modal hidden">
+    <div class="modal-card small">
+      <h3>访问路径回溯 <span class="muted">你是怎么一步步点到这个页面的</span></h3>
+      <div id="traceBody" class="trace-body"></div>
+      <div class="modal-actions">
+        <button id="traceClose" class="primary">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="domainModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>站点档案 <span class="muted" id="domainInfo"></span></h3>
+      <div id="domainBody" class="domain-body"></div>
+      <div class="modal-actions">
+        <button id="domainSearch">搜索该站记录</button>
+        <button id="domainClose" class="primary">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ctxMenu" class="ctx-menu hidden"></div>
+  <div id="privacyMenu" class="ctx-menu hidden"></div>
+  <div id="onboardModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>欢迎使用拾迹 TraceHub</h3>
+      <p class="muted">这是本机应用。开始同步前，请选择允许读取历史的浏览器与配置，并了解后台采集默认是关闭的。不会读取 Cookie 或密码。</p>
+      <div id="onboardBrowsers" class="onboard-browsers"></div>
+      <label class="check-row"><input id="onboardThumbs" type="checkbox" /> 允许自动截图（会在隐藏窗口重新打开网址，默认关闭）</label>
+      <label class="check-row"><input id="onboardContent" type="checkbox" /> 允许自动抓取正文（会访问网址，默认关闭）</label>
+      <p class="muted">未勾选的浏览器不会被导入。访客/Guest 配置请谨慎勾选。你可以随时在设置里改。</p>
+      <div class="modal-actions">
+        <button id="onboardLater">先看看已有数据</button>
+        <button id="onboardSave" class="primary">保存并开始同步</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="snapCloseModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>确认关闭这些页签？</h3>
+      <p class="muted" id="snapCloseInfo"></p>
+      <p class="warn">请先确认没有未保存的表单或文档。扩展会调用浏览器官方的页签关闭接口，逐个关闭，不会强杀浏览器进程；但扩展发起的关闭<strong>可能不会弹出</strong>网页自己的“离开此页”提示。若某个页签拒绝关闭，会记录失败，可稍后重试。</p>
+      <label class="check-row"><input id="snapAckRisk" type="checkbox" /> 我已了解未保存内容可能丢失，且关闭可能无法被网页拦截</label>
+      <div class="modal-actions">
+        <button id="snapCloseCancel">取消，只保留快照</button>
+        <button id="snapCloseGo" class="primary danger" disabled>确认关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="snapRestoreModal" class="modal hidden">
+    <div class="modal-card">
+      <h3>恢复页签</h3>
+      <p class="muted" id="snapRestoreInfo"></p>
+      <p class="warn">只能重新打开网址，不能恢复原页面的登录状态、未提交表单、滚动位置或窗口里的填写内容。默认按小批量打开，避免一次弹出过多标签。</p>
+      <div class="modal-actions">
+        <button id="snapRestoreCancel">取消</button>
+        <button id="snapRestoreGo" class="primary">打开这一批</button>
+      </div>
+    </div>
+  </div>
+
+  <input id="snapFile" type="file" accept="application/json,.json" hidden />
+
+  <div id="toast" class="toast hidden"></div>
+  <div id="thumbPreview" class="thumb-preview hidden"></div>
+  <button id="backTop" class="back-top hidden" title="回到顶部"></button>
+
+  <script src="icons.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

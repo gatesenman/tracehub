@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>拾迹页签快照 · 选项</title>
+  <link rel="stylesheet" href="popup.css" />
+  <style>body { width: auto; max-width: 560px; margin: 24px auto; } label { display: block; margin: 10px 0 4px; } input[type=text], input[type=password], input[type=number] { width: 100%; padding: 8px; border: 1px solid #d0d3dc; border-radius: 8px; box-sizing: border-box; } .row { margin: 12px 0; }</style>
+</head>
+<body>
+  <h1>与本机 TraceHub 配对</h1>
+  <p class="hint">令牌只在本机使用，用于证明是你的扩展在向本机应用提交已打开页签。应用只监听 127.0.0.1，不会上网公开端口。扩展不会申请 Cookie、密码或历史权限。</p>
+  <label>桥接端口（默认 17862）</label>
+  <input id="port" type="number" min="1024" max="65535" />
+  <label>配对令牌（从 TraceHub「设置 → 页签快照」复制）</label>
+  <input id="token" type="password" autocomplete="off" />
+  <label>Profile 备注（可选，扩展无法可靠读取浏览器配置目录名）</label>
+  <input id="profileLabel" type="text" placeholder="例如：工作 / Default" />
+  <div class="row">
+    <label><input id="includeIncognito" type="checkbox" /> 包含隐身窗口（默认关闭；还需在浏览器中允许此扩展在隐身模式下运行）</label>
+  </div>
+  <button id="save" class="primary">保存</button>
+  <span id="msg" class="hint"></span>
+  <script src="options.js"></script>
+</body>
+</html>

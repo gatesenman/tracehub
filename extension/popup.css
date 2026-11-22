@@ -1,0 +1,18 @@
+body { font: 13px/1.45 system-ui, sans-serif; width: 360px; margin: 0; padding: 14px; color: #1c1f26; background: #f6f7fb; }
+h1 { font-size: 16px; margin: 0 0 4px; }
+.sub { margin: 0 0 10px; color: #5b6170; }
+.status { padding: 8px 10px; border-radius: 8px; background: #eceef4; margin-bottom: 10px; }
+.status.ok { background: #e3f6ea; color: #166534; }
+.status.warn { background: #fff4d6; color: #7a4d00; }
+.status.err { background: #fde8e8; color: #9b1c1c; }
+.preview { max-height: 180px; overflow: auto; background: #fff; border-radius: 8px; padding: 8px 10px; margin-bottom: 10px; }
+.w { font-weight: 600; margin-top: 6px; }
+.t { display: flex; gap: 6px; color: #333; }
+.t .pin { color: #7c3aed; }
+.t .u { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.actions { display: flex; gap: 8px; margin-bottom: 10px; }
+button { border: 0; border-radius: 8px; padding: 8px 10px; cursor: pointer; background: #e5e7ef; }
+button.primary { background: #4f6ef7; color: #fff; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.hint { color: #5b6170; font-size: 12px; margin: 0 0 8px; }
+a { color: #3451c7; }
