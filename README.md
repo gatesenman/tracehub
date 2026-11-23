@@ -1,10 +1,34 @@
 # 拾迹 TraceHub
 
+<p align="center"><img src="assets/icon.png" alt="拾迹 TraceHub" width="96"></p>
+
 仓库：[https://github.com/gatesenman/tracehub](https://github.com/gatesenman/tracehub)
 
 本机桌面应用（Electron）。把多款浏览器的**浏览历史**汇到一处，并在关机前把**真实已打开的页签**保存成可整理、可分批恢复的快照。
 
 当前版本 **1.2.3**（加固测试版，待实机验收；1.2.0 / 1.2.1 源码目录与旧产物另行保留，不要把旧的 1.2.1 安装包当本版使用）。统一名称是「拾迹 TraceHub」（不再使用 Browser History Hub 作为对外名称）。
+
+## 下载（Windows，1.2.2）
+
+发行页：[GitHub Releases v1.2.2](https://github.com/gatesenman/tracehub/releases/tag/v1.2.2)
+
+| 包 | 用途 | SHA256 | 下载 |
+|---|---|---|---|
+| `TraceHub-1.2.2-setup.exe` | NSIS 安装包（83,733,975 字节） | `f070d9098cbc5b3ac76d1824a7aef537d65b787edb55902a91710eb78bbc411d` | [下载 Setup](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-setup.exe) |
+| `TraceHub-1.2.2-portable.exe` | 便携版（73,366,031 字节） | `0a2b34a04a351dcc504533836c4d4640b8179d4190271e5f97feee3cd80b7ed4` | [下载便携版](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-portable.exe) |
+| `TraceHub-1.2.2-extension.zip` | Chrome / Edge 扩展 | `009ee66cdc921182a71532ebd9af34a0b9fc1a0b2b8a5d7549a9775cedd2a7af` | [下载扩展](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-extension.zip) |
+
+安装包未代码签名。Windows 产物**尚未在真机运行验收**，不能称为已完成 Windows 烟测。不要再分发 1.2.1 安装包。试用步骤见 [docs/Windows试用检查单.md](docs/Windows试用检查单.md)，验收范围见 [docs/验收记录.md](docs/验收记录.md) 与 [docs/1.2.2-release.md](docs/1.2.2-release.md)。
+
+## 界面截图
+
+以下三张是在 Linux 箱子上启动 **拾迹 TraceHub 1.2.2** 后截取的真实产品窗口。运行时只用了隔离的本地样例数据，未导入真实浏览器配置，也未打开设置页，画面中无配对令牌或 API Key。
+
+![时间树工作台](docs/screenshots/01-workbench.png)
+
+![搜索结果](docs/screenshots/02-search.png)
+
+![页签快照整理](docs/screenshots/03-tab-snapshot.png)
 
 ## 它能做什么
 
@@ -82,3 +106,54 @@ npm run smoke     # 可选：Xvfb/无头 Electron 启动冒烟（隔离临时 us
 - better-sqlite3（本机统一库）+ sql.js（只读解析被锁定的浏览器历史，含 WAL 合并）
 - 可选 OpenAI 兼容 Chat Completions
 - 配套 Chrome / Edge Manifest V3 扩展（官方 tabs / windows / tabGroups API）
+
+
+---
+
+## English
+
+# TraceHub
+
+**1.2.2** is a hardened test build awaiting real-machine acceptance. Do not use older 1.2.1 installers. The public name is TraceHub (拾迹); “Browser History Hub” is no longer used.
+
+A local-first Electron app that unifies browsing history from multiple browsers and, before shutdown, can save *currently open tabs* as snapshots you can organize and restore in batches.
+
+### Download (Windows)
+
+Release: [v1.2.2](https://github.com/gatesenman/tracehub/releases/tag/v1.2.2)
+
+- Setup: [TraceHub-1.2.2-setup.exe](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-setup.exe) — SHA256 `f070d9098cbc5b3ac76d1824a7aef537d65b787edb55902a91710eb78bbc411d`
+- Portable: [TraceHub-1.2.2-portable.exe](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-portable.exe) — SHA256 `0a2b34a04a351dcc504533836c4d4640b8179d4190271e5f97feee3cd80b7ed4`
+- Browser extension: [TraceHub-1.2.2-extension.zip](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-extension.zip)
+
+Builds are unsigned. Windows packages have **not** been run on a real Windows machine according to the project’s own acceptance notes, so they are not claimed as Windows smoke-tested.
+
+### Screenshots
+
+These three images are real product-window captures of **TraceHub 1.2.2** running on Linux. The session used isolated local sample data only (no real browser profiles imported). Settings was not opened, so no pairing token or API key is visible.
+
+![Time-tree workbench](docs/screenshots/01-workbench.png)
+
+![Search results](docs/screenshots/02-search.png)
+
+![Tab snapshot organizer](docs/screenshots/03-tab-snapshot.png)
+
+### Features and limits
+
+- History sync for Chrome / Edge / Brave / Vivaldi / Opera (Windows) / Firefox profiles, after you opt in during onboarding.
+- Tab snapshots via a Chrome / Edge extension; Firefox open tabs cannot be captured automatically in this release (JSON import is supported).
+- Optional AI features; API keys stay in local `config.json` and never enter the renderer.
+- Auto screenshot and auto content fetch are off by default.
+- Tab restore reopens URLs only — it cannot restore logins, unsaved forms, or exact window state. The app does not take over OS shutdown.
+
+### Run from source
+
+Node.js 18+ (20 recommended):
+
+```bash
+npm ci
+npm run rebuild   # rebuild better-sqlite3 for Electron 31
+npm start
+```
+
+Windows packages: `npm run pack:win`. Cross-packing on Linux can check file format only; it does not replace a Windows smoke test. Tests: `npm test`, `npm run check`. See the Chinese sections above and `docs/验收记录.md`.
