@@ -45,6 +45,7 @@
         <button id="btnSync" class="icon-btn" title="立即从所有浏览器同步"></button>
         <button id="btnExport" class="icon-btn" title="导出全部历史 (CSV/JSON)"></button>
       </div>
+      <button id="bridgeChip" class="bridge-chip" type="button" title="页签快照桥接状态">页签桥…</button>
       <div class="btn-group">
         <button id="btnPrivacy" class="icon-btn" title="隐私暂停：暂停期间的访问不会被记录"></button>
         <button id="btnTheme" class="icon-btn" title="切换浅色/深色主题"></button>
@@ -193,7 +194,7 @@
 
   <div id="sessionModal" class="modal hidden">
     <div class="modal-card small">
-      <h3>会话恢复</h3>
+      <h3>按历史重开网址</h3>
       <p class="muted" id="sessionInfo"></p>
       <div id="sessionList" class="session-list"></div>
       <div class="modal-actions">
@@ -313,7 +314,8 @@
       <p class="warn">只能重新打开网址，不能恢复原页面的登录状态、未提交表单、滚动位置或窗口里的填写内容。默认按小批量打开，避免一次弹出过多标签。</p>
       <div class="modal-actions">
         <button id="snapRestoreCancel">取消</button>
-        <button id="snapRestoreGo" class="primary">打开这一批</button>
+        <button id="snapRestoreFallback">用默认浏览器打开网址…</button>
+        <button id="snapRestoreGo" class="primary">请扩展按布局恢复</button>
       </div>
     </div>
   </div>
@@ -324,6 +326,7 @@
   <div id="thumbPreview" class="thumb-preview hidden"></div>
   <button id="backTop" class="back-top hidden" title="回到顶部"></button>
 
+  <script src="capabilities.js"></script>
   <script src="icons.js"></script>
   <script src="renderer.js"></script>
 </body>

@@ -10,12 +10,13 @@ let bridge;
 let port;
 const received = [];
 
-function req(pathname, { method = 'GET', token = TOKEN, origin = 'chrome-extension://abcdefghijklmnop', body, host } = {}) {
+function req(pathname, { method = 'GET', token = TOKEN, origin = 'chrome-extension://abcdefghijklmnop', body, host, extensionId } = {}) {
   return new Promise((resolve, reject) => {
     const payload = body != null ? JSON.stringify(body) : null;
     const headers = { Accept: 'application/json' };
     if (origin) headers.Origin = origin;
     if (token) headers['X-TraceHub-Token'] = token;
+    if (extensionId) headers['X-Extension-Id'] = extensionId;
     if (payload) headers['Content-Type'] = 'application/json';
     const request = http.request({
       hostname: '127.0.0.1',
@@ -98,6 +99,19 @@ describe('tab bridge security + snapshot intake', () => {
     // Queue is drained.
     const again = await req('/v1/pending');
     assert.equal(again.json.commands.length, 0);
+  });
+
+  it('records lastSeenAt after a paired snapshot without putting the token in status fields used by UI', async () => {
+    const before = bridge.lastSeenAt || 0;
+    const snap = await req('/v1/snapshot', {
+      method: 'POST',
+      extensionId: 'ext-ui',
+      body: { source: 'extension', windows: [{ tabs: [{ url: 'https://example.com', title: 'Ex' }] }] },
+    });
+    assert.equal(snap.status, 200);
+    assert.ok(bridge.lastSeenAt >= before);
+    assert.equal(bridge.lastExtensionId, 'ext-ui');
+    assert.ok(Date.now() - bridge.lastSeenAt < 5000);
   });
 
   it('does not expose an arbitrary URL / exec endpoint', async () => {

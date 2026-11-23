@@ -162,6 +162,8 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
       enabled: !!config.get().bridgeEnabled,
       port: (b && b.listeningPort) || config.get().bridgePort || 17862,
       listening: !!(b && b.listeningPort),
+      lastSeenAt: (b && b.lastSeenAt) || null,
+      lastExtensionId: (b && b.lastExtensionId) || null,
       token: config.get().bridgeToken || '',
       extensionDir: extensionDir(app),
     };

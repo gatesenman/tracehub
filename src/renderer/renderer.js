@@ -2008,6 +2008,19 @@ async function showToday() {
   header.innerHTML = '';
   header.appendChild(withIcon(el('span'), 'sun', ` 今日 ${day}`));
   if (state.browserFilter) header.appendChild(el('span', 'sub', '（已按浏览器筛选）'));
+  const headerActions = el('div', 'header-actions');
+  const reopenToday = el('button', 'restore-btn', '重开今日访问过的页面');
+  reopenToday.title = '根据今日浏览历史，用系统默认浏览器打开网址。不是恢复当前已打开的页签。';
+  reopenToday.onclick = () => openSessionModal(day, null);
+  const saveLive = el('button', 'restore-btn', '保存已打开的页签');
+  saveLive.title = '需要已安装并配对的 Chrome / Edge 扩展，保存的是真实已打开的页签。';
+  saveLive.onclick = () => switchTab('snapshots');
+  const curBtnTop = el('button', 'restore-btn ai', 'AI 整理今日历史');
+  curBtnTop.onclick = () => curateTodayFlow();
+  headerActions.appendChild(reopenToday);
+  headerActions.appendChild(saveLive);
+  headerActions.appendChild(curBtnTop);
+  header.appendChild(headerActions);
   document.getElementById('summaryBox').classList.add('hidden');
   const yKey = dayKeyLocal(new Date(Date.now() - 86400000));
   const [stats, yStats, tl, readLater, revisits] = await Promise.all([
@@ -2218,19 +2231,6 @@ async function showToday() {
   const memSec = await buildMemoryLane();
   if (memSec && state.mode === 'today') body.appendChild(memSec);
 
-  // 今日会话恢复 + AI 一键整理入收藏
-  const sess = el('div', 'dash-section');
-  sess.appendChild(withIcon(el('div', 'dash-title'), 'refresh', ' 会话恢复', { size: 14 }));
-  const btn = el('button', 'restore-btn big', '重新打开今天访问过的全部页面');
-  btn.onclick = () => openSessionModal(day, null);
-  sess.appendChild(btn);
-  const curBtn = withIcon(el('button', 'restore-btn big ai'), 'wand', ' AI 整理今日历史 → 收藏夹', { size: 13 });
-  curBtn.onclick = () => curateTodayFlow();
-  sess.appendChild(curBtn);
-  const tidy = withIcon(el('button', 'restore-btn big'), 'layers', ' 关机前整理：保存已打开的页签', { size: 13 });
-  tidy.onclick = () => switchTab('snapshots');
-  sess.appendChild(tidy);
-  body.appendChild(sess);
 }
 
 // 把一天的访问按间隔（>25 分钟）自动切成“浏览会话”，每段可整段重开。
@@ -2369,8 +2369,10 @@ async function openSessionModal(day, hour) {
 async function openSessionRange(fromMs, toMs, label) {
   const pages = await hub.sessionPreview(fromMs, toMs, state.browserFilter || null);
   sessionUrls = pages.map((p) => p.url).filter((u) => /^https?:/i.test(u));
+  const disc = (window.TraceHubCapabilities && window.TraceHubCapabilities.historySessionDisclaimer())
+    || '这是根据浏览历史打开网址，不是恢复当前已打开的页签。';
   document.getElementById('sessionInfo').textContent =
-    `${label} 共 ${sessionUrls.length} 个页面（最多打开 30 个）`;
+    `${label} 共 ${sessionUrls.length} 个历史网址（最多打开 30 个）。` + disc;
   const list = document.getElementById('sessionList');
   list.innerHTML = '';
   for (const p of pages.slice(0, 50)) {
@@ -2879,6 +2881,30 @@ async function saveSettings() {
 }
 
 // ------------------------- status -----------------------------------------
+
+async function updateBridgeChip() {
+  const chip = document.getElementById('bridgeChip');
+  if (!chip) return;
+  const cap = window.TraceHubCapabilities;
+  try {
+    const st = await hub.bridgeStatus();
+    const d = cap ? cap.describeBridge(st) : { listening: !!(st && st.listening), recentlySeen: false };
+    chip.textContent = cap ? cap.bridgeChipText(d) : (d.listening ? '页签桥：已监听' : '页签桥：未监听');
+    chip.classList.toggle('ok', !!d.recentlySeen);
+    chip.classList.toggle('wait', !!(d.listening && !d.recentlySeen));
+    chip.classList.toggle('off', !d.listening);
+    chip.title = d.recentlySeen
+      ? '扩展最近在本机桥上有活动。保存已打开页签、按布局恢复和批量关闭都需要通过扩展完成。点击查看快照工作区。'
+      : (d.listening
+        ? '本机桥已监听，但还没有检测到已配对的扩展。点击查看安装与配对步骤。不装扩展时仍可查看历史、重开历史网址或导入 JSON。'
+        : '页签桥未监听。可在设置中检查端口后重启应用。');
+  } catch (e) {
+    chip.textContent = '页签桥：状态未知';
+    chip.classList.remove('ok', 'wait');
+    chip.classList.add('off');
+  }
+}
+
 async function setStatus(msg) {
   if (msg) toast(msg);
 }
@@ -2899,25 +2925,54 @@ async function showSnapshots(selectId) {
   renderSnapSidebar(selectId || (snapState.current && snapState.current.id));
   const body = document.getElementById('contentBody');
   body.innerHTML = '';
-  body.appendChild(snapIntro());
+  let bridgeDesc = null;
+  try {
+    const st = await hub.bridgeStatus();
+    bridgeDesc = window.TraceHubCapabilities ? window.TraceHubCapabilities.describeBridge(st) : st;
+  } catch (e) { bridgeDesc = null; }
+  body.appendChild(snapIntro(bridgeDesc));
   if (!snapState.list.length) {
-    body.appendChild(emptyState('layers', '还没有页签快照。请安装 Chrome / Edge 扩展并保存当前已打开的页签，或导入扩展/应用导出的 JSON。不会从浏览历史猜测活动标签。', '打开扩展目录', () => hub.openExtensionDir()));
+    body.appendChild(emptyState('layers', '还没有页签快照。请按上方步骤安装并配对 Chrome / Edge 扩展，保存当前已打开的页签；或导入以前导出的 JSON。不会从浏览历史猜测活动标签。', '打开扩展目录', () => hub.openExtensionDir()));
     return;
   }
   const id = selectId || (snapState.current && snapState.current.id) || snapState.list[0].id;
   await openSnapshotDetail(id);
 }
 
-function snapIntro() {
+function snapIntro(bridgeDesc) {
+  const cap = window.TraceHubCapabilities;
   const box = el('div', 'dash-section');
   box.appendChild(el('div', 'dash-title', '关机前整理（手动，不接管系统关机）'));
-  box.appendChild(el('p', 'muted', '场景：关机前开了很多页签，不敢关。先把「真实已打开的页签」保存成本地快照，确认成功后，再决定是否关闭。默认只保存、不关闭。不能恢复登录状态、未提交表单或滚动位置。Firefox 活动页签本轮需用 JSON 导入。'));
+  box.appendChild(el('p', 'muted', '场景：关机前开了很多页签，不敢关。先把「真实已打开的页签」保存成本地快照，确认成功后，再决定是否关闭。默认只保存、不关闭。不能恢复登录状态、未提交表单或滚动位置，也不能号称保护未保存表单。Firefox 活动页签本轮不在范围内，可用 JSON 导入。'));
+  const d = bridgeDesc || { listening: false, recentlySeen: false };
+  if (d.recentlySeen) {
+    box.appendChild(el('p', 'muted', '已检测到扩展最近在本机 127.0.0.1 桥上有活动。请在要整理的窗口用扩展弹出页保存真实已打开的页签。'));
+  } else if (d.listening) {
+    box.appendChild(el('p', 'warn', '本机桥已在监听，但还没有检测到已配对的扩展。没有扩展时，无法读取或按原布局恢复当前已打开的页签，也不能由应用批量关闭它们。'));
+  } else {
+    box.appendChild(el('p', 'warn', '页签桥当前未监听。请在设置中检查端口后重启应用。'));
+  }
+  if (cap && !d.recentlySeen) {
+    box.appendChild(el('div', 'dash-title', '安装并配对扩展（主路径）'));
+    const steps = el('ol', 'setup-steps');
+    for (const s of cap.extensionSetupSteps()) steps.appendChild(el('li', null, s));
+    box.appendChild(steps);
+    const lists = cap.withoutExtensionCapabilities();
+    box.appendChild(el('div', 'muted', '不装扩展时仍可以使用：'));
+    const ok = el('ul', 'capability-list');
+    for (const s of lists.available) ok.appendChild(el('li', null, s));
+    box.appendChild(ok);
+    box.appendChild(el('div', 'muted', '必须安装并配对扩展才能使用：'));
+    const no = el('ul', 'capability-list unavailable');
+    for (const s of lists.unavailable) no.appendChild(el('li', null, s));
+    box.appendChild(no);
+  }
   const bar = el('div', 'snap-toolbar');
   const ext = el('button', null, '打开扩展目录（Chrome / Edge 加载已解压扩展）');
   ext.onclick = () => hub.openExtensionDir();
   const imp = el('button', null, '导入 JSON 快照');
   imp.onclick = () => document.getElementById('snapFile').click();
-  const pair = el('button', null, '查看配对令牌');
+  const pair = el('button', null, '去设置复制配对令牌');
   pair.onclick = () => document.getElementById('btnSettings').click();
   bar.appendChild(ext); bar.appendChild(imp); bar.appendChild(pair);
   box.appendChild(bar);
@@ -2948,7 +3003,12 @@ async function openSnapshotDetail(id) {
   renderSnapSidebar(id);
   const body = document.getElementById('contentBody');
   body.innerHTML = '';
-  body.appendChild(snapIntro());
+  let bridgeDesc = null;
+  try {
+    const st = await hub.bridgeStatus();
+    bridgeDesc = window.TraceHubCapabilities ? window.TraceHubCapabilities.describeBridge(st) : st;
+  } catch (e) { bridgeDesc = null; }
+  body.appendChild(snapIntro(bridgeDesc));
   const head = el('div', 'dash-section');
   head.appendChild(el('div', 'dash-title', s.title));
   head.appendChild(el('div', 'muted', `${s.browserName || ''} ${s.profile || ''} · 来源：${s.source === 'file-import' ? 'JSON 导入' : '扩展'} · ${s.tabCount} 个页签 · 关闭状态：${({ none: '未关闭', pending: '等待扩展执行', done: '已关闭', partial: '部分关闭', failed: '关闭失败', cancelled: '已取消' })[s.closeStatus || 'none'] || s.closeStatus} · AI：${s.aiStatus || 'none'}`));
@@ -2960,6 +3020,7 @@ async function openSnapshotDetail(id) {
   const addBtn = (label, fn, cls) => { const b = el('button', cls || '', label); b.onclick = fn; bar.appendChild(b); return b; };
   addBtn('按组恢复…', () => beginRestore(s, null));
   addBtn('恢复时跳过重复项…', () => beginRestore(s, null, true));
+  addBtn('用默认浏览器打开网址…', () => openSnapshotUrlsInDefaultBrowser(s));
   const closeLabel = (s.closeStatus === 'partial' || s.closeStatus === 'failed') ? '重试关闭这些页签…' : '确认后关闭这些页签…';
   const closeBtn = addBtn(closeLabel, () => beginClose(s), 'danger');
   if (!s.persisted || s.closeStatus === 'done' || s.source === 'file-import' || !s.extensionId) {
@@ -3031,6 +3092,26 @@ async function runSnapAI(s, includeBody) {
   await openSnapshotDetail(s.id);
 }
 
+
+async function openSnapshotUrlsInDefaultBrowser(s) {
+  const urls = [];
+  for (const w of (s.windows || [])) {
+    for (const tab of (w.tabs || [])) {
+      if (tab && tab.url && /^https?:/i.test(tab.url) && tab.restorable !== false) urls.push(tab.url);
+    }
+  }
+  if (!urls.length) { toast('没有可打开的 http(s) 网址'); return; }
+  const cap = window.TraceHubCapabilities;
+  const note = cap ? cap.historySessionDisclaimer() : '将用系统默认浏览器打开这些网址，不会恢复窗口、分组或登录状态。';
+  const ok = await askConfirm(
+    note + ` 快照中共 ${urls.length} 个网址，本次最多打开 30 个。不会把页签标记为“已由扩展恢复”。`,
+    '用默认浏览器打开'
+  );
+  if (!ok) return;
+  const r = await hub.sessionRestore(urls);
+  toast(r.message || `已请系统默认浏览器打开 ${r.opened || 0} 个网址`);
+}
+
 async function beginClose(s) {
   if (s.source === 'file-import' || !s.extensionId) {
     toast('这份快照没有对应的扩展会话，不能远程关闭页签。请在浏览器里手动关闭。');
@@ -3072,10 +3153,18 @@ async function beginRestore(s, group, skipDuplicates = false) {
   if (!planWrap.ok) { toast(planWrap.error || '无法准备恢复'); return; }
   const plan = planWrap.plan;
   snapState.restorePlan = { id: s.id, group, skipDuplicates, offset: 0, plan };
+  let extNote = '';
+  try {
+    const st = await hub.bridgeStatus();
+    const d = window.TraceHubCapabilities ? window.TraceHubCapabilities.describeBridge(st) : st;
+    if (!d.recentlySeen) {
+      extNote = ' 当前还没有检测到已配对的扩展：「请扩展按布局恢复」会失败。若只想打开网址，请用「用默认浏览器打开网址」（不会恢复窗口和分组，也不会标记为扩展已恢复）。';
+    }
+  } catch (e) { /* ignore */ }
   document.getElementById('snapRestoreInfo').textContent =
     `将恢复「${s.title}」${group ? '中的分组「' + group + '」' : ''}：共 ${plan.total} 个可恢复网址，本批打开 ${plan.batch.length} 个（默认每批 8 个，不会一次全部打开）。` +
     (plan.unrestorableSkipped ? `另有 ${plan.unrestorableSkipped} 个内部页无法自动打开。` : '') +
-    plan.limitation;
+    (plan.limitation || '') + extNote;
   document.getElementById('snapRestoreModal').classList.remove('hidden');
 }
 
@@ -3119,6 +3208,13 @@ async function setupSnapshots() {
   rec('snapCloseGo', confirmClose);
   rec('snapRestoreCancel', () => document.getElementById('snapRestoreModal').classList.add('hidden'));
   rec('snapRestoreGo', confirmRestore);
+  rec('snapRestoreFallback', async () => {
+    document.getElementById('snapRestoreModal').classList.add('hidden');
+    const ctx = snapState.restorePlan;
+    const s = (ctx && ctx.id) ? await hub.snapshotGet(ctx.id) : snapState.current;
+    if (!s) { toast('找不到要打开的快照'); return; }
+    await openSnapshotUrlsInDefaultBrowser(s);
+  });
   const file = document.getElementById('snapFile');
   if (file) file.addEventListener('change', async () => {
     const f = file.files && file.files[0];
@@ -3427,14 +3523,18 @@ async function init() {
   document.getElementById('sessOpen').onclick = async () => {
     const n = (typeof sessionUrls !== 'undefined' && sessionUrls) ? sessionUrls.length : 0;
     const cap = Math.min(n, 30);
-    const msg = n > 30
-      ? `将打开 30 个页面（共 ${n} 个，超出上限的不会自动打开）。是否继续？`
-      : `将打开 ${cap} 个页面。是否继续？`;
+    const msg = (n > 30
+      ? `将用系统默认浏览器打开 30 个历史网址（共 ${n} 个，超出上限的不会自动打开）。`
+      : `将用系统默认浏览器打开 ${cap} 个历史网址。`)
+      + '这不是恢复当前已打开的页签，也不会恢复分组或登录状态。是否继续？';
     if (!(await askConfirm(msg, '打开'))) return;
     document.getElementById('sessionModal').classList.add('hidden');
-    setStatus('正在打开页面…');
+    setStatus('正在请系统默认浏览器打开网址…');
     const r = await hub.sessionRestore(sessionUrls);
-    setStatus(`会话恢复完成，已打开 ${r.opened} 个页面` + (n > 30 ? `（已截断，未打开 ${n - 30} 个）` : ''));
+    const extra = n > 30 ? `（已截断，未打开 ${n - 30} 个）` : '';
+    const resultMsg = ((r && r.message) ? r.message : `已请系统默认浏览器打开 ${(r && r.opened) || 0} 个网址`) + extra;
+    setStatus(resultMsg);
+    toast(resultMsg);
   };
   document.getElementById('btnSync').onclick = async () => {
     setStatus('正在同步…');
@@ -3543,6 +3643,11 @@ async function init() {
     if (bits.length) toast(`收藏已就绪：${bits.join(' · ')}`);
     if (state.mode === 'bookmarks') showSaved();
   });
+
+  const chip = document.getElementById('bridgeChip');
+  if (chip) chip.onclick = () => switchTab('snapshots');
+  await updateBridgeChip();
+  setInterval(() => { updateBridgeChip().catch(() => {}); }, 15000);
 
   await loadDays();
   // Default landing: 今日 (user can switch to 时间树).

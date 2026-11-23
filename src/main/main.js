@@ -16,6 +16,7 @@ const { ThumbWorker } = require('./thumbs');
 const ai = require('./ai');
 const { startBridge, registerSnapshotIpc } = require('./snapshot-service');
 const { isSqliteFile, restoreDatabase } = require('./backup');
+const { openHttpUrlList } = require('../shared/open-urls');
 const { domainOf } = require('./store');
 
 // The thumbnail worker renders pages in an offscreen window; offscreen
@@ -742,12 +743,14 @@ function registerIpc() {
   ipcMain.handle('session:preview', async (_e, { fromMs, toMs, browser }) =>
     store.sessionUrls(fromMs, toMs, browser || null));
   ipcMain.handle('session:restore', async (_e, { urls }) => {
-    const list = (urls || []).filter((u) => /^https?:\/\//i.test(u)).slice(0, 30);
-    for (const u of list) {
-      await shell.openExternal(u);
-      await new Promise((r) => setTimeout(r, 250));
-    }
-    return { opened: list.length };
+    return openHttpUrlList(urls, async (url) => {
+      try {
+        await shell.openExternal(url);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e.message || String(e) };
+      }
+    }, { limit: 30, delayMs: 250 });
   });
 
   // -------- insights --------

@@ -72,6 +72,14 @@ class TabBridge {
     this.commands = []; // { id, type, payload, createdAt, audience, expiresAt, delivered }
     this.executedIds = new Set(); // idempotency: never re-deliver an acked command
     this.listeningPort = null;
+    this.lastSeenAt = null;
+    this.lastExtensionId = null;
+  }
+
+  noteClient(req, extraId) {
+    this.lastSeenAt = Date.now();
+    const id = String(extraId || (req && req.headers && req.headers['x-extension-id']) || '').slice(0, 128);
+    if (id) this.lastExtensionId = id;
   }
 
   enqueueCommand(type, payload, audience = {}) {
@@ -284,6 +292,7 @@ class TabBridge {
     }
 
     this._authorized(req);
+    this.noteClient(req);
 
     const parseJson = async () => {
       const raw = await readBody(req);
@@ -300,6 +309,7 @@ class TabBridge {
       const body = await parseJson();
       const extId = String(body.extensionId || req.headers['x-extension-id'] || '').slice(0, 128);
       if (extId) this.paired.add(extId);
+      this.noteClient(req, extId);
       this._send(res, 200, {
         ok: true,
         app: 'TraceHub',
