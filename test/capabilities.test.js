@@ -61,3 +61,43 @@ describe('today layout and session restore placement in source', () => {
     assert.match(js, /重开今日访问过的页面/);
   });
 });
+
+describe('quick install guidance and pairing feedback', () => {
+  it('uses three official unpacked-load steps and does not claim silent install or a store listing', () => {
+    const steps = cap.quickInstallSteps();
+    assert.equal(steps.length, 3);
+    assert.deepEqual(steps, cap.extensionSetupSteps());
+    assert.ok(steps.some((s) => /加载已解压的扩展程序/.test(s)));
+    assert.ok(steps.some((s) => /不会替你静默安装/.test(s)));
+    assert.ok(steps.some((s) => /复制配对令牌/.test(s)));
+    const store = cap.webStoreFutureNote();
+    assert.match(store, /网上应用店|扩展商店/);
+    assert.match(store, /没有商店发布账号/);
+    assert.doesNotMatch(store, /已经上架/);
+  });
+
+  it('only reports pairing success when lastSeen flips from unseen to seen after a baseline sample', () => {
+    assert.equal(cap.pairingSucceeded(null, { recentlySeen: true }), false);
+    assert.equal(cap.pairingSucceeded({ recentlySeen: false }, { recentlySeen: true }), true);
+    assert.equal(cap.pairingSucceeded({ recentlySeen: true }, { recentlySeen: true }), false);
+    assert.equal(cap.pairingSucceeded({ recentlySeen: true }, { recentlySeen: false }), false);
+    assert.match(cap.pairingSuccessMessage(), /扩展已连接/);
+  });
+
+  it('exposes one-click official extensions page actions in the snapshot and settings UI', () => {
+    const js = fs.readFileSync(path.join(__dirname, '../src/renderer/renderer.js'), 'utf8');
+    const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
+    const pre = fs.readFileSync(path.join(__dirname, '../src/main/preload.js'), 'utf8');
+    const svc = fs.readFileSync(path.join(__dirname, '../src/main/snapshot-service.js'), 'utf8');
+    assert.match(js, /打开 Chrome 扩展页/);
+    assert.match(js, /打开 Edge 扩展页/);
+    assert.match(js, /openOfficialExtensionsPage\('chrome'\)/);
+    assert.match(js, /pairingSucceeded\(/);
+    assert.match(html, /id="cfgOpenChromeExt"/);
+    assert.match(html, /id="cfgOpenEdgeExt"/);
+    assert.match(pre, /extension:open-management-page/);
+    assert.match(svc, /extension:open-management-page/);
+    assert.doesNotMatch(js, /--load-extension/);
+    assert.doesNotMatch(js, /ExtensionInstallForcelist/);
+  });
+});

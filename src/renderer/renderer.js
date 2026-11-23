@@ -2882,6 +2882,35 @@ async function saveSettings() {
 
 // ------------------------- status -----------------------------------------
 
+let bridgeChipPrev = null;
+
+async function copyPairingToken() {
+  try {
+    const cfg = await hub.getConfig();
+    const tok = cfg && cfg.bridgeToken;
+    if (!tok) { toast('还没有配对令牌，请先打开设置确认页签桥已开启'); return; }
+    await hub.copyText(tok);
+    toast('配对令牌已复制。请到扩展选项页粘贴并保存，不要发到聊天或截图。');
+  } catch (e) {
+    toast('复制令牌失败：' + (e && e.message ? e.message : String(e)));
+  }
+}
+
+async function openOfficialExtensionsPage(browserId) {
+  if (!hub.openExtensionsPage) {
+    const page = browserId === 'edge' ? 'edge://extensions' : 'chrome://extensions';
+    toast('请在 ' + (browserId === 'edge' ? 'Edge' : 'Chrome') + ' 地址栏手动打开 ' + page + '（该地址不能做成网页链接）');
+    return;
+  }
+  try {
+    const r = await hub.openExtensionsPage(browserId);
+    if (r && r.ok) toast(r.note || '已请浏览器打开官方扩展管理页。应用不会替你静默安装扩展。');
+    else toast((r && r.error) || '未能打开扩展页，请在地址栏手动打开 chrome://extensions 或 edge://extensions');
+  } catch (e) {
+    toast('未能打开扩展页：' + (e && e.message ? e.message : String(e)));
+  }
+}
+
 async function updateBridgeChip() {
   const chip = document.getElementById('bridgeChip');
   if (!chip) return;
@@ -2889,6 +2918,10 @@ async function updateBridgeChip() {
   try {
     const st = await hub.bridgeStatus();
     const d = cap ? cap.describeBridge(st) : { listening: !!(st && st.listening), recentlySeen: false };
+    if (cap && cap.pairingSucceeded && cap.pairingSucceeded(bridgeChipPrev, d)) {
+      toast(cap.pairingSuccessMessage());
+    }
+    if (d) bridgeChipPrev = { recentlySeen: !!d.recentlySeen };
     chip.textContent = cap ? cap.bridgeChipText(d) : (d.listening ? '页签桥：已监听' : '页签桥：未监听');
     chip.classList.toggle('ok', !!d.recentlySeen);
     chip.classList.toggle('wait', !!(d.listening && !d.recentlySeen));
@@ -2952,29 +2985,38 @@ function snapIntro(bridgeDesc) {
   } else {
     box.appendChild(el('p', 'warn', '页签桥当前未监听。请在设置中检查端口后重启应用。'));
   }
-  if (cap && !d.recentlySeen) {
-    box.appendChild(el('div', 'dash-title', '安装并配对扩展（主路径）'));
-    const steps = el('ol', 'setup-steps');
-    for (const s of cap.extensionSetupSteps()) steps.appendChild(el('li', null, s));
-    box.appendChild(steps);
-    const lists = cap.withoutExtensionCapabilities();
-    box.appendChild(el('div', 'muted', '不装扩展时仍可以使用：'));
-    const ok = el('ul', 'capability-list');
-    for (const s of lists.available) ok.appendChild(el('li', null, s));
-    box.appendChild(ok);
-    box.appendChild(el('div', 'muted', '必须安装并配对扩展才能使用：'));
-    const no = el('ul', 'capability-list unavailable');
-    for (const s of lists.unavailable) no.appendChild(el('li', null, s));
-    box.appendChild(no);
+  box.appendChild(el('div', 'dash-title', d.recentlySeen ? '扩展已连接' : '快捷安装扩展（需要你在浏览器里确认，不会静默安装）'));
+  if (cap) {
+    if (!d.recentlySeen) {
+      const steps = el('ol', 'setup-steps');
+      for (const s of (cap.quickInstallSteps ? cap.quickInstallSteps() : cap.extensionSetupSteps())) {
+        steps.appendChild(el('li', null, s));
+      }
+      box.appendChild(steps);
+      if (cap.webStoreFutureNote) box.appendChild(el('p', 'muted', cap.webStoreFutureNote()));
+      const lists = cap.withoutExtensionCapabilities();
+      box.appendChild(el('div', 'muted', '不装扩展时仍可以使用：'));
+      const ok = el('ul', 'capability-list');
+      for (const s of lists.available) ok.appendChild(el('li', null, s));
+      box.appendChild(ok);
+      box.appendChild(el('div', 'muted', '必须安装并配对扩展才能使用：'));
+      const no = el('ul', 'capability-list unavailable');
+      for (const s of lists.unavailable) no.appendChild(el('li', null, s));
+      box.appendChild(no);
+    }
   }
   const bar = el('div', 'snap-toolbar');
-  const ext = el('button', null, '打开扩展目录（Chrome / Edge 加载已解压扩展）');
+  const ext = el('button', 'primary', '打开扩展目录');
   ext.onclick = () => hub.openExtensionDir();
+  const chromePage = el('button', null, '打开 Chrome 扩展页');
+  chromePage.onclick = () => openOfficialExtensionsPage('chrome');
+  const edgePage = el('button', null, '打开 Edge 扩展页');
+  edgePage.onclick = () => openOfficialExtensionsPage('edge');
+  const pair = el('button', null, '复制配对令牌');
+  pair.onclick = () => copyPairingToken();
   const imp = el('button', null, '导入 JSON 快照');
   imp.onclick = () => document.getElementById('snapFile').click();
-  const pair = el('button', null, '去设置复制配对令牌');
-  pair.onclick = () => document.getElementById('btnSettings').click();
-  bar.appendChild(ext); bar.appendChild(imp); bar.appendChild(pair);
+  bar.appendChild(ext); bar.appendChild(chromePage); bar.appendChild(edgePage); bar.appendChild(pair); bar.appendChild(imp);
   box.appendChild(bar);
   return box;
 }
@@ -3569,6 +3611,11 @@ async function init() {
     toast('已清除本机保存的密钥');
   };
   document.getElementById('cfgOpenExt').onclick = () => hub.openExtensionDir();
+  const cfgChromeExt = document.getElementById('cfgOpenChromeExt');
+  if (cfgChromeExt) cfgChromeExt.onclick = () => openOfficialExtensionsPage('chrome');
+  const cfgEdgeExt = document.getElementById('cfgOpenEdgeExt');
+  if (cfgEdgeExt) cfgEdgeExt.onclick = () => openOfficialExtensionsPage('edge');
+
   document.getElementById('cfgCopyToken').onclick = async () => {
     const tok = document.getElementById('cfgBridgeToken').value;
     if (!tok) return;

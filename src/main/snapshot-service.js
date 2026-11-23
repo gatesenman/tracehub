@@ -156,6 +156,17 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
     return { ok: true, path: dir };
   });
 
+  ipcMain.handle('extension:open-management-page', async (_e, browserId) => {
+    const id = browserId === 'edge' ? 'edge' : (browserId === 'chrome' ? 'chrome' : '');
+    if (!id) return { ok: false, error: '只支持为 Chrome 或 Edge 打开官方扩展管理页' };
+    try {
+      const { openExtensionsManagementPage } = require('./browser-launch');
+      return await openExtensionsManagementPage(id);
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+  });
+
   ipcMain.handle('bridge:status', async () => {
     const b = getBridge && getBridge();
     return {

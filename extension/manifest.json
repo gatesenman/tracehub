@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "拾迹 TraceHub 页签快照",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "把当前已打开的页签保存到本机 TraceHub。只有快照成功保存并经你在应用中确认后，才会关闭页签。不读取 Cookie、密码或浏览历史。",
   "permissions": [
     "tabs",

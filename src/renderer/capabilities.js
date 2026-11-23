@@ -41,13 +41,28 @@
   }
 
   function extensionSetupSteps() {
+    return quickInstallSteps();
+  }
+
+  function quickInstallSteps() {
     return [
-      '在 TraceHub 中打开扩展目录',
-      'Chrome 或 Edge：扩展程序 → 打开开发者模式 → 加载已解压的扩展程序，选中该目录',
-      '在扩展选项页粘贴配对令牌（在设置中复制；不要发到聊天或截图）',
-      '回到要整理的浏览器窗口，用扩展弹出页保存当前已打开的页签',
-      '保存成功后，再在 TraceHub 里按组恢复，或在确认快照已保存后关闭页签',
+      '点击「打开扩展目录」，确认文件夹里有 manifest.json。',
+      '点击「打开 Chrome 扩展页」或「打开 Edge 扩展页」，打开开发者模式，选择「加载已解压的扩展程序」，选中上一步的目录。这是官方的本地加载方式，应用不会替你静默安装扩展。',
+      '点击「复制配对令牌」，在扩展选项页粘贴并保存（不要发到聊天或截图）。配对成功后，本页会自动提示「扩展已连接」。然后到要整理的窗口，用扩展弹出页保存已打开的页签。',
     ];
+  }
+
+  function pairingSucceeded(prev, next) {
+    if (!prev || typeof prev !== 'object') return false;
+    return !!(next && next.recentlySeen && !prev.recentlySeen);
+  }
+
+  function pairingSuccessMessage() {
+    return '已检测到扩展已连接。现在可以用扩展弹出页保存真实已打开的页签，并在 TraceHub 里按窗口和分组恢复。';
+  }
+
+  function webStoreFutureNote() {
+    return '以后若上架 Chrome 网上应用店或 Microsoft Edge 扩展商店，安装步骤会更短。本版还没有商店发布账号和审核条件，因此不提供商店一键安装，请按上面三步加载已解压的扩展。卸载只需在浏览器扩展页移除该扩展。';
   }
 
   function withoutExtensionCapabilities() {
@@ -72,6 +87,10 @@
     bridgeChipText,
     historySessionDisclaimer,
     extensionSetupSteps,
+    quickInstallSteps,
+    pairingSucceeded,
+    pairingSuccessMessage,
+    webStoreFutureNote,
     withoutExtensionCapabilities,
   };
 });

@@ -83,6 +83,7 @@ contextBridge.exposeInMainWorld('api', {
   clearSecrets: () => ipcRenderer.invoke('config:clear-keys'),
   domainCount: (domain) => ipcRenderer.invoke('domain:count', domain),
   openExtensionDir: () => ipcRenderer.invoke('extension:open-dir'),
+  openExtensionsPage: (browserId) => ipcRenderer.invoke('extension:open-management-page', browserId),
   bridgeStatus: () => ipcRenderer.invoke('bridge:status'),
   regenBridgeToken: () => ipcRenderer.invoke('bridge:regen-token'),
   snapshotList: () => ipcRenderer.invoke('snapshot:list'),
