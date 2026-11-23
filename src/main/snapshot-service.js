@@ -81,8 +81,19 @@ async function startBridge(config, store, { onSnapshotSaved } = {}) {
       if (onSnapshotSaved) onSnapshotSaved({ id: sid, commandResult: body });
     },
   });
+  if (store && typeof snap.clearStaleInFlight === 'function') {
+    try {
+      snap.clearStaleInFlight(store);
+    } catch (e) { /* store may not have snapshot tables yet in some tests */ }
+  }
   try {
     await bridge.start();
+    if (bridge.listeningPort && config && typeof config.update === 'function') {
+      const current = Number((config.get() || {}).bridgePort);
+      if (current !== Number(bridge.listeningPort)) {
+        config.update({ bridgePort: bridge.listeningPort });
+      }
+    }
     const rawEnqueue = bridge.enqueueCommand.bind(bridge);
     bridge.enqueueCommand = (type, payload, audience) => {
       const cmd = rawEnqueue(type, payload, audience);

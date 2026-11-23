@@ -84,14 +84,14 @@ function baseUrl(port) {
   return `http://127.0.0.1:${Number(port) || DEFAULT_PORT}`;
 }
 
-async function bridgeRequest(pathname, { method = 'GET', body } = {}) {
+async function bridgeRequest(pathname, { method = 'GET', body, port } = {}) {
   const cfg = await settings();
   if (!cfg.token) {
     const err = new Error('尚未填写配对令牌。请在 TraceHub 设置里复制令牌，粘贴到本扩展选项页。');
     err.code = 'NO_TOKEN';
     throw err;
   }
-  const res = await fetch(baseUrl(cfg.port) + pathname, {
+  const res = await fetch(baseUrl(port || cfg.port) + pathname, {
     method,
     headers: {
       'Content-Type': 'application/json',
@@ -111,15 +111,45 @@ async function bridgeRequest(pathname, { method = 'GET', body } = {}) {
   return json;
 }
 
+function candidatePorts(preferred) {
+  const p = Number(preferred) || DEFAULT_PORT;
+  const list = [];
+  const add = (n) => {
+    const port = Number(n);
+    if (!Number.isFinite(port) || port < 1024 || port > 65535) return;
+    if (!list.includes(port)) list.push(port);
+  };
+  add(p);
+  for (let i = 0; i <= 10; i++) add(DEFAULT_PORT + i);
+  return list;
+}
+
+async function healthAt(port) {
+  try {
+    const res = await fetch(baseUrl(port) + '/v1/health', { method: 'GET' });
+    if (!res.ok) return { ok: false, port };
+    let json = null;
+    try { json = await res.json(); } catch (e) { json = null; }
+    if (json && json.ok && json.app === 'TraceHub') {
+      return { ok: true, app: 'TraceHub', bridge: true, port: Number(json.port || port) };
+    }
+    return { ok: false, port, error: '127.0.0.1 上的响应不是 TraceHub 页签桥，已跳过，以免把令牌发到别的程序' };
+  } catch (e) {
+    return { ok: false, port, error: '本机应用未在运行或桥接未开启' };
+  }
+}
+
 async function health() {
   const cfg = await settings();
-  try {
-    const res = await fetch(baseUrl(cfg.port) + '/v1/health', { method: 'GET' });
-    if (!res.ok) return { ok: false };
-    return await res.json();
-  } catch (e) {
-    return { ok: false, error: '本机应用未在运行或桥接未开启' };
+  return healthAt(cfg.port);
+}
+
+async function findTraceHubPort(preferred) {
+  for (const port of candidatePorts(preferred)) {
+    const h = await healthAt(port);
+    if (h && h.ok) return { port: h.port || port, health: h };
   }
+  return null;
 }
 
 async function pushSnapshot() {
@@ -329,25 +359,38 @@ async function pairWithApp() {
       error: '尚未填写配对令牌。请在 TraceHub 设置里复制令牌，粘贴到本扩展选项页并保存。',
     };
   }
-  const h = await health();
+  let port = Number(cfg.port) || DEFAULT_PORT;
+  let h = await healthAt(port);
   if (!h || !h.ok) {
-    return {
-      ok: false,
-      code: 'OFFLINE',
-      error: (h && h.error) || '本机 TraceHub 未在运行，或桥接未开启。请先打开应用后再保存配对。',
-    };
+    const found = await findTraceHubPort(port);
+    if (!found) {
+      return {
+        ok: false,
+        code: 'OFFLINE',
+        error: '本机 TraceHub 未在运行，或扩展里的端口与应用实际监听端口不一致。请对照应用快照页或设置中显示的 127.0.0.1 端口。查找时不会把令牌发到未确认的端口。',
+      };
+    }
+    port = found.port;
+    h = found.health;
+    if (port !== Number(cfg.port)) {
+      try { await chrome.storage.local.set({ port }); } catch (e) { /* keep going, pair still uses updated settings next time */ }
+    }
   }
   try {
     const r = await bridgeRequest('/v1/pair', {
       method: 'POST',
+      port,
       body: { extensionId: chrome.runtime.id, browser: detectBrowser() },
     });
     try { await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 }); } catch (e) { /* ignore */ }
+    const used = (r && r.port) || port;
+    const switched = used && Number(cfg.port) && Number(used) !== Number(cfg.port);
     return {
       ok: true,
       paired: true,
-      port: (r && r.port) || cfg.port,
-      message: '已与本机 TraceHub 配对。保存页签、按布局恢复和关闭都会走这条本机通道。',
+      port: used,
+      message: '已与本机 TraceHub 配对（127.0.0.1:' + used + '）。保存页签、按布局恢复和关闭都会走这条本机通道。'
+        + (switched ? ' 已把扩展中的端口更新为实际监听端口。' : ''),
     };
   } catch (e) {
     return {

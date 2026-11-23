@@ -64,6 +64,7 @@ describe('tab bridge security + snapshot intake', () => {
     const r = await req('/v1/health', { token: '', origin: '' });
     assert.equal(r.status, 200);
     assert.equal(r.json.app, 'TraceHub');
+    assert.equal(r.json.port, port);
   });
 
   it('rejects a bad token and a non-extension Origin', async () => {
@@ -119,5 +120,39 @@ describe('tab bridge security + snapshot intake', () => {
     assert.equal(r.status, 404);
     const r2 = await req('/v1/exec', { method: 'POST', body: { cmd: 'shutdown' } });
     assert.equal(r2.status, 404);
+  });
+});
+
+describe('tab bridge port fallback when the preferred port is busy', () => {
+  it('listens on the next port in the allowed range and advertises it on /v1/health', async () => {
+    const occupied = await new Promise((resolve) => {
+      const s = http.createServer(() => {});
+      s.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    const busyPort = occupied.address().port;
+    const bridge = new TabBridge({
+      port: busyPort,
+      getToken: () => 'fallback-token',
+      onSnapshot: async () => ({ ok: true }),
+      onCommandResult: async () => {},
+    });
+    bridge.fallbackSpan = 5;
+    const listening = await bridge.start();
+    assert.notEqual(listening, busyPort);
+    assert.equal(bridge.usedFallback, true);
+    const r = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port: listening, path: '/v1/health', method: 'GET' }, (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => resolve({ status: res.statusCode, json: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.app, 'TraceHub');
+    assert.equal(r.json.port, listening);
+    await bridge.stop();
+    await new Promise((resolve) => occupied.close(() => resolve()));
   });
 });

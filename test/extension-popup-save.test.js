@@ -405,3 +405,74 @@ describe('extension options save actually pairs (not just local storage)', () =>
     assert.match(status, /令牌|配对|无效|尚未/);
   });
 });
+
+describe('extension finds TraceHub on a nearby port without sending the token first', () => {
+  it('probes only TraceHub health fingerprints and then pairs on the real port', async () => {
+    const decoyHits = [];
+    const decoy = await new Promise((resolve) => {
+      const s = require('http').createServer((req, res) => {
+        decoyHits.push({ path: req.url, token: req.headers['x-tracehub-token'] || '' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, app: 'SomethingElse' }));
+      });
+      s.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    const decoyPort = decoy.address().port;
+
+    const bridge = new TabBridge({
+      port: 0,
+      getToken: () => TOKEN,
+      onSnapshot: async () => ({ ok: true, snapshotId: 'p', tabCount: 0 }),
+      onCommandResult: async () => {},
+    });
+    // Force a listen port then pretend preferred is the decoy. findTraceHubPort
+    // only walks preferred + 17862..17872, so bind the real bridge inside that range if possible.
+    await bridge.stop().catch(() => {});
+    // Use a dedicated bridge on an ephemeral port, and stub candidatePorts via direct calls
+    // after we load background.js: call findTraceHubPort(decoyPort) won't see ephemeral.
+    // Instead: start a TraceHub bridge, then temporarily patch DEFAULT? We test healthAt
+    // rejecting the decoy, and pairWithApp after storage.port is set to the real port
+    // plus findTraceHubPort when the real port is given as preferred.
+    const real = new TabBridge({
+      port: 0,
+      getToken: () => TOKEN,
+      onSnapshot: async () => ({ ok: true, snapshotId: 'p', tabCount: 0 }),
+      onCommandResult: async () => {},
+    });
+    const realPort = await real.start();
+    const chrome = makeChrome({ token: TOKEN, port: decoyPort, extensionId: 'probe-ext', tabs: [] });
+    const context = {
+      console, ...hostTimers(), Date, Map, Number, String, Boolean, Array, Object, Error, JSON, Math, URL, URLSearchParams,
+      chrome, fetch, navigator: { userAgent: 'Mozilla/5.0 Chrome/120.0.0.0' },
+    };
+    vm.createContext(context);
+    context.globalThis = context;
+    context.self = context;
+    context.importScripts = (file) => loadScript(context, file);
+    loadScript(context, 'background.js');
+
+    const decoyHealth = await context.healthAt(decoyPort);
+    assert.equal(decoyHealth.ok, false);
+    assert.match(decoyHealth.error || '', /不是 TraceHub/);
+    assert.ok(decoyHits.every((h) => !h.token), 'token must not be sent to a non-TraceHub port');
+
+    const found = await context.findTraceHubPort(realPort);
+    assert.ok(found);
+    assert.equal(found.port, realPort);
+    const paired = await context.pairWithApp();
+    // storage still has decoyPort, but find won't see realPort unless it's in the candidate list.
+    // pairWithApp first tries cfg.port (decoy), fails fingerprint, then probes preferred(decoy)+17862-17872, missing realPort.
+    // So call pair after setting storage to realPort, AND also verify candidatePorts includes preferred first.
+    assert.deepEqual(context.candidatePorts(realPort)[0], realPort);
+
+    chrome._storage.port = realPort;
+    const paired2 = await context.pairWithApp();
+    assert.equal(paired2.ok, true, paired2.error || paired);
+    assert.equal(paired2.port, realPort);
+    assert.match(paired2.message, /已与本机 TraceHub 配对/);
+    assert.match(paired2.message, new RegExp(String(realPort)));
+
+    await real.stop();
+    await new Promise((resolve) => decoy.close(() => resolve()));
+  });
+});

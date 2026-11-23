@@ -322,6 +322,21 @@ describe('restore/close pipeline through IPC, bridge, and extension SW', () => {
     assert.ok(after.windows[0].tabs.every((t) => t.restoreStatus !== 'opened'));
   });
 
+  it('clears queued restore and pending close when the bridge restarts, because the in-memory queue is gone', async () => {
+    const saved = snap.saveSnapshot(store, snapshotPayload(), { source: 'extension', extensionId: EXT_ID, audienceBrowser: 'chrome' });
+    const queued = await ipc.invoke('snapshot:restore-batch', { id: saved.id, confirmed: true, batchSize: 8, offset: 0 });
+    assert.equal(queued.pending, true);
+    const closing = await ipc.invoke('snapshot:request-close', { id: saved.id, userConfirmed: true, ackUnsavedRisk: true });
+    assert.equal(closing.pending, true);
+    await bridge.stop();
+    bridge = await startBridge(config, store, {});
+    const after = snap.getSnapshot(store, saved.id);
+    assert.equal(after.closeStatus, 'failed');
+    assert.match(after.closeError, /重启|失效/);
+    assert.ok(after.windows[0].tabs.every((tab) => tab.restoreStatus === 'failed'));
+    assert.ok(after.windows[0].tabs.every((tab) => /重启|失效/.test(tab.restoreError || '')));
+  });
+
   it('tells the truth when a restore is queued without a recently seen extension', async () => {
     const saved = snap.saveSnapshot(store, snapshotPayload(), { source: 'extension', extensionId: EXT_ID, audienceBrowser: 'chrome' });
     const cold = await ipc.invoke('snapshot:restore-batch', { id: saved.id, confirmed: true, batchSize: 8, offset: 0 });

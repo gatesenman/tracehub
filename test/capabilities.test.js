@@ -116,3 +116,46 @@ describe('today session reopen is visible and honest', () => {
     assert.doesNotMatch(css, /hour-label:hover \.restore-btn/);
   });
 });
+
+describe('restore/close completion copy and next-batch offer', () => {
+  it('describes extension ack results without claiming unfinished work is done', () => {
+    const timeout = cap.describeCommandResult({ type: 'restore', timedOut: true, openedCount: 0, failed: [] });
+    assert.equal(timeout.level, 'err');
+    assert.match(timeout.text, /未在有效期内/);
+    assert.doesNotMatch(timeout.text, /已全部恢复/);
+
+    const partial = cap.describeCommandResult({ type: 'restore', openedCount: 5, failed: [{ url: 'https://x' }] });
+    assert.equal(partial.level, 'warn');
+    assert.match(partial.text, /打开了 5 个/);
+    assert.match(partial.text, /1 个失败/);
+
+    const closed = cap.describeCommandResult({ type: 'close', ok: true, closedCount: 3, failed: [], skipped: [] });
+    assert.equal(closed.level, 'ok');
+    assert.match(closed.text, /不能保护未保存表单/);
+  });
+
+  it('only offers the next restore batch after a non-timeout ack when leftovers remain', () => {
+    const plan = { remaining: 12, nextOffset: 8, done: false };
+    assert.equal(cap.shouldOfferNextRestoreBatch(plan, { type: 'restore', ok: true, openedCount: 8 }), true);
+    assert.equal(cap.shouldOfferNextRestoreBatch(plan, { type: 'restore', timedOut: true }), false);
+    assert.equal(cap.shouldOfferNextRestoreBatch({ remaining: 0, nextOffset: 8, done: true }, { type: 'restore', ok: true }), false);
+    assert.equal(cap.shouldOfferNextRestoreBatch(plan, { type: 'close', ok: true }), false);
+  });
+
+  it('wires next-batch-after-ack and the actual listening port into the snapshot UI', () => {
+    const js = fs.readFileSync(path.join(__dirname, '../src/renderer/renderer.js'), 'utf8');
+    assert.match(js, /maybeContinueRestoreAfterAck/);
+    assert.match(js, /shouldOfferNextRestoreBatch/);
+    assert.match(js, /handleSnapshotUpdated/);
+    assert.match(js, /上一批已经有了扩展回执/);
+    assert.match(js, /扩展选项里的端口必须与此一致|把扩展选项中的端口设为/);
+    assert.doesNotMatch(js, /r\.ok && !r\.pending && r\.plan/);
+  });
+
+  it('includes the listening port in the bridge chip when known', () => {
+    const now = 1000;
+    const d = cap.describeBridge({ listening: true, lastSeenAt: now, port: 17863 }, now);
+    assert.equal(d.port, 17863);
+    assert.equal(cap.bridgeChipText(d), '页签桥：扩展已连接 · 17863');
+  });
+});

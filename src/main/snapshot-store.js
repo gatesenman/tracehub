@@ -330,6 +330,17 @@ function applyTabPatches(store, snapshotId, tabs) {
   return getSnapshot(store, snapshotId);
 }
 
+const STALE_IN_FLIGHT_REASON = '应用重启或页签桥重新启动后，尚未执行完的扩展指令已经失效（当时只存在于内存队列）。请重新发起恢复或关闭。';
+
+function clearStaleInFlight(store, reason) {
+  const msg = reason || STALE_IN_FLIGHT_REASON;
+  const pendingCloses = queryAll(store.db, "SELECT id FROM snapshots WHERE persisted = 1 AND close_status = 'pending'");
+  for (const r of pendingCloses) setCloseStatus(store, r.id, 'failed', msg);
+  const queued = queryAll(store.db, "SELECT id FROM snapshot_tabs WHERE restore_status = 'queued'");
+  for (const r of queued) updateTabMeta(store, r.id, { restoreStatus: 'failed', restoreError: msg });
+  return { closeMarkedFailed: pendingCloses.length, restoreMarkedFailed: queued.length, reason: msg };
+}
+
 function deleteSnapshot(store, snapshotId) {
   store.db.run('DELETE FROM snapshot_tabs WHERE snapshot_id = ?', [snapshotId]);
   store.db.run('DELETE FROM snapshot_windows WHERE snapshot_id = ?', [snapshotId]);
@@ -360,6 +371,8 @@ module.exports = {
   setAiStatus,
   applyTabPatches,
   deleteSnapshot,
+  clearStaleInFlight,
+  STALE_IN_FLIGHT_REASON,
   countByDomain,
   applyLocalClassify,
 };

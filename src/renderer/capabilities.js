@@ -16,9 +16,11 @@
     const listening = !!(status && status.listening);
     const lastSeenAt = status && status.lastSeenAt ? Number(status.lastSeenAt) : 0;
     const recentlySeen = !!(lastSeenAt && (t - lastSeenAt) <= RECENT_MS);
+    const port = status && status.port ? Number(status.port) : 0;
     return {
       listening,
       recentlySeen,
+      port: port || null,
       lastSeenAt: lastSeenAt || null,
       lastExtensionId: (status && status.lastExtensionId) ? String(status.lastExtensionId) : null,
       canCaptureLiveTabs: recentlySeen,
@@ -31,9 +33,48 @@
   }
 
   function bridgeChipText(d) {
-    if (d && d.recentlySeen) return '页签桥：扩展已连接';
-    if (d && d.listening) return '页签桥：等待扩展配对';
+    const port = d && d.port ? ` · ${d.port}` : '';
+    if (d && d.recentlySeen) return '页签桥：扩展已连接' + port;
+    if (d && d.listening) return '页签桥：等待扩展配对' + port;
     return '页签桥：未监听';
+  }
+
+  function describeCommandResult(body) {
+    if (!body || !body.type) return null;
+    if (body.type === 'restore') {
+      const opened = Number(body.openedCount != null ? body.openedCount : ((body.opened || []).length));
+      const failed = (body.failed || []).length;
+      if (body.timedOut) {
+        return { kind: 'restore', level: 'err', text: body.message || '扩展未在有效期内打开页签（可能离线或未轮询）。未完成的项不会标记为已恢复。' };
+      }
+      if (failed && opened) {
+        return { kind: 'restore', level: 'warn', text: `扩展已执行恢复：打开了 ${opened} 个页签，${failed} 个失败。失败项可在快照里重试。不能恢复登录态、表单或滚动位置。` };
+      }
+      if (failed && !opened) {
+        return { kind: 'restore', level: 'err', text: body.message || `恢复失败（${failed} 个）。` };
+      }
+      return { kind: 'restore', level: 'ok', text: body.message || `扩展已打开 ${opened} 个页签。不能恢复登录态、表单或滚动位置。` };
+    }
+    if (body.type === 'close') {
+      const closed = Number(body.closedCount || 0);
+      const failed = (body.failed || []).length;
+      const skipped = (body.skipped || []).length;
+      if (body.timedOut) {
+        return { kind: 'close', level: 'err', text: body.message || '关闭指令已过期，扩展未在有效期内执行。不会标记为已关闭。' };
+      }
+      const extra = (skipped ? `，跳过 ${skipped} 个地址已变或不存在的页签` : '') + (failed ? `，${failed} 个关闭失败可重试` : '');
+      if (failed && !closed) return { kind: 'close', level: 'err', text: (body.message || '关闭失败') + extra };
+      if (failed || skipped) return { kind: 'close', level: 'warn', text: (body.message || `已关闭 ${closed} 个页签`) + extra };
+      return { kind: 'close', level: 'ok', text: (body.message || `已关闭 ${closed} 个页签`) + extra + ' 不能保护未保存表单。' };
+    }
+    return null;
+  }
+
+  function shouldOfferNextRestoreBatch(plan, commandResult) {
+    if (!plan || plan.done || !(plan.remaining > 0) || plan.nextOffset == null) return false;
+    if (!commandResult || commandResult.type !== 'restore') return false;
+    if (commandResult.timedOut) return false;
+    return true;
   }
 
   function historySessionDisclaimer() {
@@ -92,5 +133,7 @@
     pairingSuccessMessage,
     webStoreFutureNote,
     withoutExtensionCapabilities,
+    describeCommandResult,
+    shouldOfferNextRestoreBatch,
   };
 });

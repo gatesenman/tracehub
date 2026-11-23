@@ -218,12 +218,16 @@ async function runSelfTest(ctx) {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const bg = fs.readFileSync(path.join(dir, 'background.js'), 'utf8');
     const cg = fs.readFileSync(path.join(dir, 'close-guard.js'), 'utf8');
+    const opt = fs.readFileSync(path.join(dir, 'options.js'), 'utf8');
     const ok = manifest.version
       && bg.includes('bridgeRequest')
       && bg.includes('handleRestoreCommand')
+      && bg.includes('pairWithApp')
+      && bg.includes('findTraceHubPort')
       && cg.includes('closeGuardApi')
       && cg.includes('buildWindowCreateAttempts')
-      && !/\bvar api\b/.test(cg);
+      && !/\bvar api\b/.test(cg)
+      && opt.includes('saveAndPair');
     return {
       ok,
       path: dir,

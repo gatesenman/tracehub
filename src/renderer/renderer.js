@@ -2897,11 +2897,17 @@ async function saveSettings() {
     for (const d of added) total += (await hub.domainCount(d)).count || 0;
     if (!(await askConfirm(`黑名单新增 ${added.length} 个域名，将删除已有的 ${total} 条访问记录，且不会自动恢复。是否继续？`, '删除并保存'))) return;
   }
-  await hub.updateConfig(patch);
+  const saved = await hub.updateConfig(patch);
   for (const d of added) await hub.blacklistAdd(d);
   document.getElementById('settingsModal').classList.add('hidden');
   refreshCurrentView();
-  setStatus('设置已保存');
+  if (saved && saved.bridgeError) {
+    setStatus('设置已保存，但页签桥未能在新端口监听：' + saved.bridgeError);
+  } else if (saved && patch.bridgePort != null && saved.bridgePort && Number(saved.bridgePort) !== Number(patch.bridgePort)) {
+    setStatus(`设置已保存。请求的端口 ${patch.bridgePort} 已被占用，页签桥改在 127.0.0.1:${saved.bridgePort} 监听。请把扩展选项中的端口改为 ${saved.bridgePort}。`);
+  } else {
+    setStatus('设置已保存');
+  }
 }
 
 // ------------------------- status -----------------------------------------
@@ -2914,7 +2920,12 @@ async function copyPairingToken() {
     const tok = cfg && cfg.bridgeToken;
     if (!tok) { toast('还没有配对令牌，请先打开设置确认页签桥已开启'); return; }
     await hub.copyText(tok);
-    toast('配对令牌已复制。请到扩展选项页粘贴并保存，不要发到聊天或截图。');
+    let portNote = '';
+    try {
+      const st = await hub.bridgeStatus();
+      if (st && st.port) portNote = `本机桥正在 127.0.0.1:${st.port} 监听，请把扩展选项里的端口设为同一个值。`;
+    } catch (e2) { portNote = ''; }
+    toast('配对令牌已复制。请到扩展选项页粘贴并保存，不要发到聊天或截图。' + (portNote ? ' ' + portNote : ''));
   } catch (e) {
     toast('复制令牌失败：' + (e && e.message ? e.message : String(e)));
   }
@@ -2950,11 +2961,12 @@ async function updateBridgeChip() {
     chip.classList.toggle('ok', !!d.recentlySeen);
     chip.classList.toggle('wait', !!(d.listening && !d.recentlySeen));
     chip.classList.toggle('off', !d.listening);
+    const portHint = d.port ? ` 当前监听 127.0.0.1:${d.port}。` : '';
     chip.title = d.recentlySeen
-      ? '扩展最近在本机桥上有活动。保存已打开页签、按布局恢复和批量关闭都需要通过扩展完成。点击查看快照工作区。'
+      ? '扩展最近在本机桥上有活动。保存已打开页签、按布局恢复和批量关闭都需要通过扩展完成。点击查看快照工作区。' + portHint
       : (d.listening
-        ? '本机桥已监听，但还没有检测到已配对的扩展。点击查看安装与配对步骤。不装扩展时仍可查看历史、重开历史网址或导入 JSON。'
-        : '页签桥未监听。可在设置中检查端口后重启应用。');
+        ? '本机桥已监听，但还没有检测到已配对的扩展。点击查看安装与配对步骤。不装扩展时仍可查看历史、重开历史网址或导入 JSON。' + portHint
+        : '页签桥未监听。可在设置中检查端口；若常用端口被占用，应用会尝试相邻端口。');
   } catch (e) {
     chip.textContent = '页签桥：状态未知';
     chip.classList.remove('ok', 'wait');
@@ -3002,12 +3014,13 @@ function snapIntro(bridgeDesc) {
   box.appendChild(el('div', 'dash-title', '关机前整理（手动，不接管系统关机）'));
   box.appendChild(el('p', 'muted', '场景：关机前开了很多页签，不敢关。先把「真实已打开的页签」保存成本地快照，确认成功后，再决定是否关闭。默认只保存、不关闭。不能恢复登录状态、未提交表单或滚动位置，也不能号称保护未保存表单。Firefox 活动页签本轮不在范围内，可用 JSON 导入。'));
   const d = bridgeDesc || { listening: false, recentlySeen: false };
+  const portLabel = d.port ? `127.0.0.1:${d.port}` : '127.0.0.1';
   if (d.recentlySeen) {
-    box.appendChild(el('p', 'muted', '已检测到扩展最近在本机 127.0.0.1 桥上有活动。请在要整理的窗口用扩展弹出页保存真实已打开的页签。'));
+    box.appendChild(el('p', 'muted', `已检测到扩展最近在本机 ${portLabel} 桥上有活动。请在要整理的窗口用扩展弹出页保存真实已打开的页签。扩展选项里的端口必须与此一致。`));
   } else if (d.listening) {
-    box.appendChild(el('p', 'warn', '本机桥已在监听，但还没有检测到已配对的扩展。没有扩展时，无法读取或按原布局恢复当前已打开的页签，也不能由应用批量关闭它们。'));
+    box.appendChild(el('p', 'warn', `本机桥已在 ${portLabel} 监听，但还没有检测到已配对的扩展。没有扩展时，无法读取或按原布局恢复当前已打开的页签，也不能由应用批量关闭它们。请把扩展选项中的端口设为 ${d.port || '与设置中相同'}。`));
   } else {
-    box.appendChild(el('p', 'warn', '页签桥当前未监听。请在设置中检查端口后重启应用。'));
+    box.appendChild(el('p', 'warn', '页签桥当前未监听。请在设置中检查端口；若端口被占用，应用会尝试相邻端口，保存设置后可看到实际监听地址。'));
   }
   box.appendChild(el('div', 'dash-title', d.recentlySeen ? '扩展已连接' : '快捷安装扩展（需要你在浏览器里确认，不会静默安装）'));
   if (cap) {
@@ -3243,22 +3256,52 @@ async function confirmRestore() {
     batchSize: 8, offset: ctx.offset, confirmed: true,
   });
   if (!r.ok) toast(r.error || r.message || '恢复失败');
-  else if (r.pending || r.via === 'extension') toast(r.message || '已向配对扩展发出恢复请求，等待执行。完成前不会标记为已恢复。');
-  else toast(r.message || '已发出恢复请求');
-  if (r.ok && !r.pending && r.plan && !r.plan.done && r.plan.remaining > 0) {
-    const more = await askConfirm(`这一批已处理。还剩 ${r.plan.remaining} 个网址，是否继续打开下一批（最多 8 个）？`, '打开下一批');
-    if (more) {
-      snapState.restorePlan = { ...ctx, offset: r.plan.nextOffset };
-      const planWrap = await hub.snapshotRestorePlan({ id: ctx.id, group: ctx.group, skipDuplicates: ctx.skipDuplicates, batchSize: 8, offset: r.plan.nextOffset });
-      if (planWrap.ok) {
-        snapState.restorePlan.plan = planWrap.plan;
-        document.getElementById('snapRestoreInfo').textContent =
-          `下一批将打开 ${planWrap.plan.batch.length} 个网址，还剩 ${planWrap.plan.remaining} 个（处理完本批后）。`;
-        document.getElementById('snapRestoreModal').classList.remove('hidden');
-      }
-    }
+  else toast(r.message || '已向配对扩展发出恢复请求，等待执行。完成前不会标记为已恢复。');
+  if (r.ok && r.plan) {
+    snapState.restorePlan = {
+      ...ctx,
+      offset: r.plan.nextOffset,
+      plan: r.plan,
+      commandId: r.commandId || null,
+      waitingAck: !!r.pending,
+    };
   }
   if (ctx.id) await openSnapshotDetail(ctx.id);
+}
+
+async function maybeContinueRestoreAfterAck(commandResult) {
+  const cap = window.TraceHubCapabilities;
+  const ctx = snapState.restorePlan;
+  if (!ctx || !ctx.plan || !cap || !cap.shouldOfferNextRestoreBatch) return;
+  if (!cap.shouldOfferNextRestoreBatch(ctx.plan, commandResult)) return;
+  const remaining = ctx.plan.remaining;
+  const more = await askConfirm(`上一批已经有了扩展回执。还剩 ${remaining} 个网址，是否继续请扩展打开下一批（最多 8 个）？在扩展再次回执前不会标记为已恢复。`, '打开下一批');
+  if (!more) return;
+  const r = await hub.snapshotRestoreBatch({
+    id: ctx.id, group: ctx.group, skipDuplicates: ctx.skipDuplicates,
+    batchSize: 8, offset: ctx.offset, confirmed: true,
+  });
+  if (!r.ok) { toast(r.error || r.message || '下一批恢复失败'); return; }
+  toast(r.message || '已发出下一批恢复请求');
+  if (r.plan) {
+    snapState.restorePlan = { ...ctx, offset: r.plan.nextOffset, plan: r.plan, commandId: r.commandId || null, waitingAck: !!r.pending };
+  }
+  if (ctx.id) await openSnapshotDetail(ctx.id);
+}
+
+async function handleSnapshotUpdated(payload) {
+  const result = payload && payload.commandResult;
+  if (result) {
+    const cap = window.TraceHubCapabilities;
+    const described = cap && cap.describeCommandResult ? cap.describeCommandResult(result) : null;
+    if (described && described.text) toast(described.text);
+  }
+  if (state.mode === 'snapshots') {
+    await showSnapshots((payload && payload.id) || (snapState.current && snapState.current.id));
+  }
+  if (result && result.type === 'restore') {
+    await maybeContinueRestoreAfterAck(result);
+  }
 }
 
 async function setupSnapshots() {
@@ -3296,8 +3339,8 @@ async function setupSnapshots() {
       toast('导入失败：' + (e.message || e));
     }
   });
-  hub.onSnapshotUpdated(() => {
-    if (state.mode === 'snapshots') showSnapshots(snapState.current && snapState.current.id);
+  hub.onSnapshotUpdated((payload) => {
+    handleSnapshotUpdated(payload).catch((e) => toast('更新快照状态失败：' + (e && e.message ? e.message : String(e))));
   });
 }
 

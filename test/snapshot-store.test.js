@@ -124,4 +124,21 @@ describe('snapshot store persistence', () => {
     assert.equal(again.windows[0].tabs[0].restoreStatus, 'failed');
     assert.equal(again.windows[0].tabs[1].restoreStatus, 'none');
   });
+
+  it('marks pending closes and queued restores as failed after a restart, with an honest reason', () => {
+    const saved = snap.saveSnapshot(store, payload(), { source: 'extension', extensionId: 'ext-stale' });
+    snap.setCloseStatus(store, saved.id, 'pending', '');
+    for (const tab of snap.getSnapshot(store, saved.id).windows[0].tabs) {
+      snap.updateTabMeta(store, tab.id, { restoreStatus: 'queued', restoreError: '' });
+    }
+    const r = snap.clearStaleInFlight(store);
+    assert.equal(r.closeMarkedFailed, 1);
+    assert.ok(r.restoreMarkedFailed >= 2);
+    const after = snap.getSnapshot(store, saved.id);
+    assert.equal(after.closeStatus, 'failed');
+    assert.match(after.closeError, /重启|失效/);
+    assert.ok(after.windows[0].tabs.every((tab) => tab.restoreStatus === 'failed'));
+    assert.ok(after.windows[0].tabs.every((tab) => /重启|失效/.test(tab.restoreError)));
+  });
+
 });

@@ -181,29 +181,62 @@ class TabBridge {
     );
   }
 
-  async start() {
-    if (this.server) return this.listeningPort;
-    this.server = http.createServer((req, res) => {
+  async _listen(port) {
+    const server = http.createServer((req, res) => {
       this._handle(req, res).catch((err) => {
         const status = err.status || 500;
         this._send(res, status, { ok: false, error: err.message || 'internal error' }, req);
       });
     });
-    this.server.on('error', (err) => console.error('[tab-bridge]', err));
+    this.server = server;
     await new Promise((resolve, reject) => {
       const onErr = (err) => {
-        this.server.off('error', onErr);
+        try { server.close(); } catch (e) { /* ignore */ }
         reject(err);
       };
-      this.server.once('error', onErr);
-      this.server.listen(this.port, '127.0.0.1', (err) => {
-        this.server.off('error', onErr);
-        if (err) reject(err);
-        else resolve();
+      server.once('error', onErr);
+      server.listen(port, '127.0.0.1', (err) => {
+        server.off('error', onErr);
+        if (err) {
+          try { server.close(); } catch (e) { /* ignore */ }
+          reject(err);
+        } else resolve();
       });
     });
     this.listeningPort = this.server.address().port;
+    this.server.on('error', (err) => console.error('[tab-bridge]', err));
     return this.listeningPort;
+  }
+
+  async start() {
+    if (this.server) return this.listeningPort;
+    const preferred = Number(this.port);
+    if (!Number.isFinite(preferred) || preferred < 0) {
+      const err = new Error('页签桥端口无效');
+      err.code = 'EINVAL';
+      throw err;
+    }
+    if (preferred === 0) {
+      this.usedFallback = false;
+      return this._listen(0);
+    }
+    const span = this.fallbackSpan == null ? 10 : Number(this.fallbackSpan);
+    let lastErr = null;
+    for (let p = preferred; p <= preferred + Math.max(0, span); p++) {
+      try {
+        await this._listen(p);
+        this.preferredPort = preferred;
+        this.usedFallback = this.listeningPort !== preferred;
+        return this.listeningPort;
+      } catch (e) {
+        this.server = null;
+        this.listeningPort = null;
+        lastErr = e;
+        if (e && e.code !== 'EADDRINUSE') throw e;
+      }
+    }
+    const err = lastErr || new Error('无法在本机监听页签桥端口');
+    throw err;
   }
 
   async stop() {
@@ -287,7 +320,7 @@ class TabBridge {
 
     if (req.method === 'GET' && (path === '/v1/health' || path === '/health')) {
       // Unauthenticated liveness only — no token, no commands, no paths.
-      this._send(res, 200, { ok: true, app: 'TraceHub', bridge: true }, req);
+      this._send(res, 200, { ok: true, app: 'TraceHub', bridge: true, port: this.listeningPort }, req);
       return;
     }
 

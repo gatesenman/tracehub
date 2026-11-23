@@ -288,6 +288,22 @@ function migrateUserData(userData) {
   } catch (e) { console.error('userData migration failed', e); }
 }
 
+function onSnapshotSavedFromBridge(saved) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('snapshot:updated', saved);
+  }
+  try { if (typeof pushUpdate === 'function') pushUpdate(); } catch (e) { /* ignore */ }
+}
+
+async function startAppBridge() {
+  if (tabBridge && typeof tabBridge.stop === 'function') {
+    try { await tabBridge.stop(); } catch (e) { console.error('tab bridge stop failed', e); }
+    tabBridge = null;
+  }
+  tabBridge = await startBridge(config, store, { onSnapshotSaved: onSnapshotSavedFromBridge });
+  return tabBridge;
+}
+
 async function bootstrap() {
   const userData = app.getPath('userData');
   const selfTest = process.env.TRACEHUB_SELFTEST === '1' || process.env.TRACEHUB_SELFTEST === 'true';
@@ -375,14 +391,7 @@ async function bootstrap() {
   }
 
   try {
-    tabBridge = await startBridge(config, store, {
-      onSnapshotSaved: (saved) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('snapshot:updated', saved);
-        }
-        pushUpdate();
-      },
-    });
+    await startAppBridge();
   } catch (e) {
     console.error('tab bridge start failed', e);
   }
@@ -676,11 +685,21 @@ function registerIpc() {
   ipcMain.handle('config:get', async () => publicConfig());
   ipcMain.handle('config:update', async (_e, patch) => {
     if (patch && Array.isArray(patch.enabledProfiles)) patch.onboardingCompleted = true;
+    const prevListen = tabBridge && tabBridge.listeningPort;
     config.update(patch);
     if (patch.syncIntervalMs && sync) sync.setIntervalMs(patch.syncIntervalMs);
     if ('autoLaunch' in patch) applyAutoLaunch();
     if (sync && (patch.onboardingCompleted || patch.enabledProfiles)) {
       sync.syncOnce(true).catch((e) => console.error('sync after config', e));
+    }
+    if (patch && patch.bridgePort != null && Number(patch.bridgePort) !== Number(prevListen || 0)) {
+      try {
+        await startAppBridge();
+      } catch (e) {
+        const out = publicConfig();
+        out.bridgeError = e.message || String(e);
+        return out;
+      }
     }
     return publicConfig();
   });
