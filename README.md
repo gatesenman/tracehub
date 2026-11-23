@@ -20,7 +20,15 @@
 
 安装包未代码签名。Windows 产物**尚未在真机运行验收**，不能称为已完成 Windows 烟测。不要再分发 1.2.1 安装包。试用步骤见 [docs/Windows试用检查单.md](docs/Windows试用检查单.md)，验收范围见 [docs/验收记录.md](docs/验收记录.md) 与 [docs/1.2.2-release.md](docs/1.2.2-release.md)。
 
-产品主界面的清晰截图目前缺失，待补；仓库仅有应用图标 `assets/icon.png`，本次不使用生成或虚构界面图。
+## 界面截图
+
+仓库里目前**没有**产品主界面截图，只有应用图标 `assets/icon.png`（图标不算产品界面）。下列路径已预留，等待用桌面在真实运行的应用里拍摄后再放入，**不使用生成或虚构界面图占位**：
+
+- `docs/screenshots/01-workbench.png`：主工作区（时间树 / 今日总览）
+- `docs/screenshots/02-search.png`：搜索结果
+- `docs/screenshots/03-tab-snapshot.png`：页签快照整理页
+
+详见 `docs/screenshots/README.md`。
 
 
 ## 它能做什么
@@ -119,7 +127,9 @@ Release: [v1.2.2](https://github.com/gatesenman/tracehub/releases/tag/v1.2.2)
 - Portable: [TraceHub-1.2.2-portable.exe](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-portable.exe) — SHA256 `0a2b34a04a351dcc504533836c4d4640b8179d4190271e5f97feee3cd80b7ed4`
 - Browser extension: [TraceHub-1.2.2-extension.zip](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-extension.zip)
 
-Builds are unsigned. Windows packages have **not** been run on a real Windows machine according to the project’s own acceptance notes, so they are not claimed as Windows smoke-tested. Clear product UI screenshots are not in the repo yet and are left as a follow-up; only the app icon is present, and no generated UI images are used.
+Builds are unsigned. Windows packages have **not** been run on a real Windows machine according to the project’s own acceptance notes, so they are not claimed as Windows smoke-tested. ### Screenshots
+
+The repository still has no product UI screenshots (the app icon in `assets/icon.png` does not count). Paths are reserved at `docs/screenshots/01-workbench.png`, `02-search.png`, and `03-tab-snapshot.png` for real captures from a running app. No generated or invented UI images are used as placeholders.
 
 ### Features and limits
 
