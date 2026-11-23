@@ -22,14 +22,13 @@
 
 ## 界面截图
 
-仓库里目前**没有**产品主界面截图，只有应用图标 `assets/icon.png`（图标不算产品界面）。下列路径已预留，等待用桌面在真实运行的应用里拍摄后再放入，**不使用生成或虚构界面图占位**：
+以下三张是在 Linux 箱子上启动 **拾迹 TraceHub 1.2.2** 后截取的真实产品窗口。运行时只用了隔离的本地样例数据，未导入真实浏览器配置，也未打开设置页，画面中无配对令牌或 API Key。
 
-- `docs/screenshots/01-workbench.png`：主工作区（时间树 / 今日总览）
-- `docs/screenshots/02-search.png`：搜索结果
-- `docs/screenshots/03-tab-snapshot.png`：页签快照整理页
+![时间树工作台](docs/screenshots/01-workbench.png)
 
-详见 `docs/screenshots/README.md`。
+![搜索结果](docs/screenshots/02-search.png)
 
+![页签快照整理](docs/screenshots/03-tab-snapshot.png)
 
 ## 它能做什么
 
@@ -127,9 +126,17 @@ Release: [v1.2.2](https://github.com/gatesenman/tracehub/releases/tag/v1.2.2)
 - Portable: [TraceHub-1.2.2-portable.exe](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-portable.exe) — SHA256 `0a2b34a04a351dcc504533836c4d4640b8179d4190271e5f97feee3cd80b7ed4`
 - Browser extension: [TraceHub-1.2.2-extension.zip](https://github.com/gatesenman/tracehub/releases/download/v1.2.2/TraceHub-1.2.2-extension.zip)
 
-Builds are unsigned. Windows packages have **not** been run on a real Windows machine according to the project’s own acceptance notes, so they are not claimed as Windows smoke-tested. ### Screenshots
+Builds are unsigned. Windows packages have **not** been run on a real Windows machine according to the project’s own acceptance notes, so they are not claimed as Windows smoke-tested.
 
-The repository still has no product UI screenshots (the app icon in `assets/icon.png` does not count). Paths are reserved at `docs/screenshots/01-workbench.png`, `02-search.png`, and `03-tab-snapshot.png` for real captures from a running app. No generated or invented UI images are used as placeholders.
+### Screenshots
+
+These three images are real product-window captures of **TraceHub 1.2.2** running on Linux. The session used isolated local sample data only (no real browser profiles imported). Settings was not opened, so no pairing token or API key is visible.
+
+![Time-tree workbench](docs/screenshots/01-workbench.png)
+
+![Search results](docs/screenshots/02-search.png)
+
+![Tab snapshot organizer](docs/screenshots/03-tab-snapshot.png)
 
 ### Features and limits
 
