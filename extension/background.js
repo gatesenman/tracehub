@@ -320,6 +320,44 @@ async function handleRestoreCommand(cmd) {
   };
 }
 
+async function pairWithApp() {
+  const cfg = await settings();
+  if (!cfg.token) {
+    return {
+      ok: false,
+      code: 'NO_TOKEN',
+      error: '尚未填写配对令牌。请在 TraceHub 设置里复制令牌，粘贴到本扩展选项页并保存。',
+    };
+  }
+  const h = await health();
+  if (!h || !h.ok) {
+    return {
+      ok: false,
+      code: 'OFFLINE',
+      error: (h && h.error) || '本机 TraceHub 未在运行，或桥接未开启。请先打开应用后再保存配对。',
+    };
+  }
+  try {
+    const r = await bridgeRequest('/v1/pair', {
+      method: 'POST',
+      body: { extensionId: chrome.runtime.id, browser: detectBrowser() },
+    });
+    try { await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 }); } catch (e) { /* ignore */ }
+    return {
+      ok: true,
+      paired: true,
+      port: (r && r.port) || cfg.port,
+      message: '已与本机 TraceHub 配对。保存页签、按布局恢复和关闭都会走这条本机通道。',
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      code: e.code || (e.status === 401 ? 'BAD_TOKEN' : 'PAIR_FAILED'),
+      error: e.message || String(e),
+    };
+  }
+}
+
 async function pollPending() {
   const h = await health();
   if (!h.ok) return { ok: false, offline: true };
@@ -350,6 +388,7 @@ chrome.alarms.onAlarm.addListener((a) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const run = async () => {
     if (msg.type === 'health') return health();
+    if (msg.type === 'pair') return pairWithApp();
     if (msg.type === 'collect') return collectLiveTabs();
     if (msg.type === 'save') return pushSnapshot();
     if (msg.type === 'poll') return pollPending();

@@ -15,4 +15,7 @@ button { border: 0; border-radius: 8px; padding: 8px 10px; cursor: pointer; back
 button.primary { background: #4f6ef7; color: #fff; }
 button:disabled { opacity: .5; cursor: not-allowed; }
 .hint { color: #5b6170; font-size: 12px; margin: 0 0 8px; }
+.hint.ok { color: #166534; }
+.hint.warn { color: #7a4d00; }
+.hint.err { color: #9b1c1c; }
 a { color: #3451c7; }

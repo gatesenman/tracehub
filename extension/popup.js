@@ -40,15 +40,21 @@ async function send(type) {
 }
 
 async function refresh() {
-  const health = await send('health');
   const collected = await send('collect');
   if (collected && collected.windows) renderPreview(collected);
+  const health = await send('health');
   if (!health || !health.ok) {
-    setStatus('未连上本机 TraceHub。请先打开应用，并在选项页粘贴配对令牌。', 'warn');
+    setStatus('未连上本机 TraceHub。请先打开应用，再在选项页保存配对令牌。应用在运行不等于已经配对。', 'warn');
     btnSave.disabled = true;
     return;
   }
-  setStatus('已连上本机应用。预览如下，确认后点保存。默认不会关页签。', 'ok');
+  const pair = await send('pair');
+  if (!pair || !pair.ok) {
+    setStatus((pair && pair.error) || '应用在运行，但尚未配对成功。请在选项页粘贴令牌并保存，等提示配对成功后再保存页签。', 'warn');
+    btnSave.disabled = true;
+    return;
+  }
+  setStatus('已与本机 TraceHub 配对。预览如下，确认后点保存。默认不会关页签。', 'ok');
   btnSave.disabled = false;
 }
 

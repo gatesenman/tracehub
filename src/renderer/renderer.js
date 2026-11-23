@@ -653,7 +653,7 @@ function renderTimeline(day, tl, stats) {
     hourLabel.appendChild(el('span', 'hour-chip', `${String(h.hour).padStart(2, '0')}:00`));
     hourLabel.appendChild(el('span', 'sub', `${h.domains.reduce((n, g) => n + g.count, 0)} 条 · ${h.domains.length} 个站点`));
     const restore = withIcon(el('button', 'restore-btn'), 'refresh', ' 重开本时段', { size: 12 });
-    restore.title = '一键在浏览器重新打开这个时段访问过的页面';
+    restore.title = '按浏览历史打开此时段访问过的网址，不是恢复当时已打开的页签、窗口或登录状态。';
     restore.onclick = (e) => { e.stopPropagation(); openSessionModal(day, h.hour); };
     hourLabel.appendChild(restore);
     hourLabel.style.cursor = 'pointer';
@@ -2014,7 +2014,19 @@ async function showToday() {
   reopenToday.onclick = () => openSessionModal(day, null);
   const saveLive = el('button', 'restore-btn', '保存已打开的页签');
   saveLive.title = '需要已安装并配对的 Chrome / Edge 扩展，保存的是真实已打开的页签。';
-  saveLive.onclick = () => switchTab('snapshots');
+  saveLive.onclick = async () => {
+    let paired = false;
+    try {
+      const st = await hub.bridgeStatus();
+      const cap = window.TraceHubCapabilities;
+      const d = cap ? cap.describeBridge(st) : st;
+      paired = !!(d && d.recentlySeen);
+    } catch (e) { paired = false; }
+    if (!paired) {
+      toast('保存已打开的页签需要已配对的 Chrome / Edge 扩展。即将打开快照页，可按快捷安装步骤完成配对。未配对时不能读取当前页签。');
+    }
+    switchTab('snapshots');
+  };
   const curBtnTop = el('button', 'restore-btn ai', 'AI 整理今日历史');
   curBtnTop.onclick = () => curateTodayFlow();
   headerActions.appendChild(reopenToday);
@@ -2064,7 +2076,13 @@ async function showToday() {
     openHour = h;
     cols[h].classList.add('active');
     if (sideRows[h]) sideRows[h].classList.add('active');
-    detail.appendChild(el('div', 'dash-title', `${String(h).padStart(2, '0')}:00 - ${String(h).padStart(2, '0')}:59（${counts[h]} 条）`));
+    const detailHead = el('div', 'hour-detail-head');
+    detailHead.appendChild(el('div', 'dash-title', `${String(h).padStart(2, '0')}:00 - ${String(h).padStart(2, '0')}:59（${counts[h]} 条）`));
+    const reopenHour = withIcon(el('button', 'restore-btn'), 'refresh', ' 重开本时段访问过的网址', { size: 12 });
+    reopenHour.title = '按浏览历史用系统默认浏览器打开网址，不是恢复当时已打开的页签、窗口或登录状态。';
+    reopenHour.onclick = (e) => { e.stopPropagation(); openSessionModal(day, h); };
+    detailHead.appendChild(reopenHour);
+    detail.appendChild(detailHead);
     const hb = byHour.get(h);
     const all = [];
     for (const g of hb.domains) for (const item of g.entries) all.push(item);
@@ -2097,6 +2115,12 @@ async function showToday() {
     gauge.appendChild(fill);
     row.appendChild(gauge);
     row.appendChild(el('span', 'hour-row-count', counts[h] ? String(counts[h]) : ''));
+    if (counts[h]) {
+      const reopen = el('button', 'mini-btn hour-reopen', '重开');
+      reopen.title = '按浏览历史打开此时段访问过的网址，不是恢复当时已打开的页签。';
+      reopen.onclick = (e) => { e.stopPropagation(); openSessionModal(day, h); };
+      row.appendChild(reopen);
+    }
     row.onclick = () => renderDetail(h, false);
     sideRows.push(row);
     hourList.appendChild(row);
@@ -2118,7 +2142,7 @@ async function showToday() {
   hourSec.appendChild(detail);
   body.appendChild(hourSec);
 
-  // 今日浏览会话：按间隔自动分段，一键恢复整段工作现场
+  // 今日浏览会话：按间隔自动分段；「重开本段」按历史打开网址，不是恢复当时窗口
   const sessSec = buildTodaySessions(day, tl);
   if (sessSec) body.appendChild(sessSec);
 
@@ -2253,7 +2277,7 @@ function buildTodaySessions(day, tl) {
 
   const sec = el('div', 'dash-section');
   sec.appendChild(withIcon(el('div', 'dash-title'), 'repeat', ` 今日浏览会话（自动分段，共 ${real.length} 段）`, { size: 14 }));
-  sec.appendChild(el('div', 'side-hint', '按访问间隔自动切段，“重开本段”可一键恢复整段工作现场'));
+  sec.appendChild(el('div', 'side-hint', '按访问间隔自动切段。「重开本段」会用系统默认浏览器打开这段历史里的网址，不是恢复当时的窗口、分组或登录状态。'));
   for (const s of real.slice(-8).reverse()) {
     const row = el('div', 'sess-row');
     row.appendChild(el('span', 'sess-time', `${fmtTime(s.from)} - ${fmtTime(s.to)}`));

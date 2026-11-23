@@ -228,7 +228,13 @@ describe('extension popup save → background → live HTTP bridge', () => {
     const previewText = (preview.innerHTML || '') + (preview.children || []).map((c) => c.textContent || '').join(' ');
     // titles are rendered; urls are in title attributes. Either is fine.
     assert.match(String(preview.textContent || preview.innerHTML || previewText), /窗口|Example|example/);
-    assert.equal(document.getElementById('btnSave').disabled, false, 'Save should be enabled after a successful health+collect');
+    const pairDeadline = Date.now() + 3000;
+    while (Date.now() < pairDeadline) {
+      if (!document.getElementById('btnSave').disabled && /已与本机 TraceHub 配对/.test(document.getElementById('status').textContent)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(document.getElementById('btnSave').disabled, false, 'Save should be enabled only after health and a successful pair');
+    assert.match(document.getElementById('status').textContent, /已与本机 TraceHub 配对/);
 
     document.getElementById('btnSave').click();
     const saveDeadline = Date.now() + 3000;
@@ -267,5 +273,135 @@ describe('extension popup save → background → live HTTP bridge', () => {
     assert.equal(result.ok, false);
     assert.match(result.error, /配对令牌/);
     assert.doesNotMatch(result.error, /is not a function/);
+  });
+});
+
+
+describe('extension options save actually pairs (not just local storage)', () => {
+  let bridge;
+  let port;
+
+  before(async () => {
+    bridge = new TabBridge({
+      port: 0,
+      getToken: () => TOKEN,
+      onSnapshot: async () => ({ ok: true, snapshotId: 'x', tabCount: 0 }),
+      onCommandResult: async () => {},
+    });
+    port = await bridge.start();
+  });
+
+  after(async () => {
+    if (bridge) await bridge.stop();
+  });
+
+  function loadOptions(chrome, document) {
+    const context = {
+      console, ...hostTimers(), Date, Map, Number, String, Boolean, Array, Object, Error, JSON, Math,
+      chrome, document, fetch, navigator: { userAgent: 'Mozilla/5.0 Chrome/120.0.0.0' },
+    };
+    vm.createContext(context);
+    context.globalThis = context;
+    context.self = context;
+    context.importScripts = (file) => loadScript(context, file);
+    loadScript(context, 'background.js');
+    loadScript(context, 'options.js');
+    return context;
+  }
+
+  function makeOptionsDocument() {
+    const nodes = new Map();
+    const makeEl = (id, tag) => {
+      const el = {
+        id,
+        tagName: (tag || 'input').toUpperCase(),
+        textContent: '',
+        className: '',
+        value: '',
+        checked: false,
+        listeners: {},
+        addEventListener(type, fn) { this.listeners[type] = this.listeners[type] || []; this.listeners[type].push(fn); },
+        click() { for (const fn of this.listeners.click || []) fn(); },
+      };
+      nodes.set(id, el);
+      return el;
+    };
+    makeEl('port');
+    makeEl('token');
+    makeEl('profileLabel');
+    makeEl('includeIncognito');
+    makeEl('save', 'button');
+    makeEl('msg', 'span');
+    return {
+      getElementById(id) { return nodes.get(id) || null; },
+      _nodes: nodes,
+    };
+  }
+
+  it('saving a valid token posts /v1/pair and reports success, updating lastSeenAt', async () => {
+    const chrome = makeChrome({ token: '', port, extensionId: 'opt-ext-1', tabs: [] });
+    const document = makeOptionsDocument();
+    loadOptions(chrome, document);
+    document.getElementById('port').value = String(port);
+    document.getElementById('token').value = TOKEN;
+    const before = bridge.lastSeenAt;
+    document.getElementById('save').click();
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (/已与本机 TraceHub 配对/.test(document.getElementById('msg').textContent)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.match(document.getElementById('msg').textContent, /已与本机 TraceHub 配对/);
+    assert.doesNotMatch(document.getElementById('msg').textContent, /^已保存。$/);
+    assert.equal(chrome._storage.token, TOKEN);
+    assert.ok(bridge.lastSeenAt && (!before || bridge.lastSeenAt >= before));
+    assert.equal(bridge.lastExtensionId, 'opt-ext-1');
+  });
+
+  it('a wrong token or missing app is reported as not paired, never as a silent success', async () => {
+    const chrome = makeChrome({ token: '', port, extensionId: 'opt-ext-2', tabs: [] });
+    const document = makeOptionsDocument();
+    loadOptions(chrome, document);
+    document.getElementById('port').value = String(port);
+    document.getElementById('token').value = 'definitely-wrong-token';
+    document.getElementById('save').click();
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (/未成功|无效|失败/.test(document.getElementById('msg').textContent)) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.match(document.getElementById('msg').textContent, /未成功|无效/);
+    assert.doesNotMatch(document.getElementById('msg').textContent, /已与本机 TraceHub 配对/);
+  });
+
+  it('popup does not treat unauthenticated health as already paired', async () => {
+    const chrome = makeChrome({
+      token: 'wrong-token',
+      port,
+      extensionId: 'opt-ext-3',
+      tabs: [{ id: 1, url: 'https://example.com/', title: 'Ex' }],
+    });
+    const document = makeDocument();
+    const context = {
+      console, ...hostTimers(), Date, Map, Number, String, Boolean, Array, Object, Error, JSON, Math, URL, URLSearchParams,
+      chrome, document, fetch, navigator: { userAgent: 'Mozilla/5.0 Chrome/120.0.0.0' },
+    };
+    vm.createContext(context);
+    context.globalThis = context;
+    context.self = context;
+    context.importScripts = (file) => loadScript(context, file);
+    loadScript(context, 'background.js');
+    loadScript(context, 'popup.js');
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const text = document.getElementById('status').textContent;
+      if (text && text !== '正在保存快照…') break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const status = document.getElementById('status').textContent;
+    assert.doesNotMatch(status, /已与本机 TraceHub 配对/);
+    assert.doesNotMatch(status, /^已连上本机应用/);
+    assert.equal(document.getElementById('btnSave').disabled, true);
+    assert.match(status, /令牌|配对|无效|尚未/);
   });
 });

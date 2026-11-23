@@ -322,6 +322,29 @@ describe('restore/close pipeline through IPC, bridge, and extension SW', () => {
     assert.ok(after.windows[0].tabs.every((t) => t.restoreStatus !== 'opened'));
   });
 
+  it('tells the truth when a restore is queued without a recently seen extension', async () => {
+    const saved = snap.saveSnapshot(store, snapshotPayload(), { source: 'extension', extensionId: EXT_ID, audienceBrowser: 'chrome' });
+    const cold = await ipc.invoke('snapshot:restore-batch', { id: saved.id, confirmed: true, batchSize: 8, offset: 0 });
+    assert.equal(cold.ok, true);
+    assert.equal(cold.pending, true);
+    assert.equal(cold.extensionRecentlySeen, false);
+    assert.match(cold.message, /最近没有检测到配对扩展/);
+    assert.match(cold.message, /打开扩展弹出页/);
+
+    bridge.lastSeenAt = Date.now();
+    bridge.lastExtensionId = EXT_ID;
+    const warm = await ipc.invoke('snapshot:restore-batch', { id: saved.id, confirmed: true, batchSize: 8, offset: 0 });
+    assert.equal(warm.ok, true);
+    assert.equal(warm.extensionRecentlySeen, true);
+    assert.match(warm.message, /后台闹钟|已向配对扩展发出/);
+    assert.doesNotMatch(warm.message, /最近没有检测到/);
+
+    const closeCold = await ipc.invoke('snapshot:request-close', { id: saved.id, userConfirmed: true, ackUnsavedRisk: true });
+    // lastSeen was just set, so close should be "recent"
+    assert.equal(closeCold.extensionRecentlySeen, true);
+    assert.match(closeCold.message, /核对当前网址|后台闹钟/);
+  });
+
   it('marks close as pending on enqueue, not done, and only closes URL-matching tabs after the extension acks', async () => {
     const saved = snap.saveSnapshot(store, snapshotPayload(), { source: 'extension', extensionId: EXT_ID, audienceBrowser: 'chrome' });
     const close = await ipc.invoke('snapshot:request-close', { id: saved.id, userConfirmed: true, ackUnsavedRisk: true });

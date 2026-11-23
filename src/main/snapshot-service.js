@@ -6,6 +6,7 @@ const { TabBridge } = require('./tab-bridge');
 const snap = require('./snapshot-store');
 const core = require('../shared/snapshot-core');
 const { isRestorableUrl, sanitizeAiList } = require('../shared/close-guard');
+const extSession = require('../shared/extension-session');
 
 function extensionDir(app) {
   if (app && app.isPackaged) return path.join(process.resourcesPath, 'extension');
@@ -294,13 +295,22 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
     const payload = { snapshotId: s.id, expectedTabs, audience };
     const cmd = bridge.enqueueCommand('close', payload, audience);
     snap.setCloseStatus(store, s.id, 'pending', '');
+    const queued = extSession.describeQueuedCommand({
+      kind: 'close',
+      recentlySeen: extSession.isRecentlySeen(bridge.lastSeenAt),
+      lastExtensionId: bridge.lastExtensionId,
+      expectedExtensionId: s.extensionId,
+      batchCount: expectedTabs.length,
+    });
     return {
       ok: true,
       pending: true,
       commandId: cmd.id,
       tabCount: expectedTabs.length,
       expiresAt: cmd.expiresAt,
-      message: '已向当初提交这份快照的扩展发出关闭请求（约 3 分钟内有效）。扩展会先核对当前网址再关闭；地址已变或页签已不存在的会跳过。不会强杀浏览器，也不能保护未保存表单。',
+      extensionRecentlySeen: queued.recentlySeen,
+      extensionMismatch: queued.extensionMismatch,
+      message: queued.message,
     };
   });
 
@@ -361,16 +371,27 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
     })).filter((w) => w.tabs.length);
     const audience = { extensionId: s.extensionId, browserId: s.audienceBrowser || s.browserId };
     const cmd = bridge.enqueueCommand('restore', { snapshotId: s.id, windows }, audience);
-    for (const t of plan.batch) {
-      if (t.id) snap.updateTabMeta(store, t.id, { restoreStatus: 'queued', restoreError: '' });
+    for (const tab of plan.batch) {
+      if (tab.id) snap.updateTabMeta(store, tab.id, { restoreStatus: 'queued', restoreError: '' });
     }
+    const queued = extSession.describeQueuedCommand({
+      kind: 'restore',
+      recentlySeen: extSession.isRecentlySeen(bridge.lastSeenAt),
+      lastExtensionId: bridge.lastExtensionId,
+      expectedExtensionId: s.extensionId,
+      batchCount: plan.batch.length,
+      total: plan.total,
+      remaining: plan.remaining,
+    });
     return {
       ok: true,
       pending: true,
       via: 'extension',
       commandId: cmd.id,
       plan,
-      message: `已向配对扩展发出恢复请求（本批 ${plan.batch.length} 个，共 ${plan.total}，还剩 ${plan.remaining}）。请等待扩展在来源浏览器中打开；完成前不会标记为已恢复。不能恢复登录态、表单或滚动位置。`,
+      extensionRecentlySeen: queued.recentlySeen,
+      extensionMismatch: queued.extensionMismatch,
+      message: queued.message,
     };
   });
 

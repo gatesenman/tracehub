@@ -101,3 +101,18 @@ describe('quick install guidance and pairing feedback', () => {
     assert.doesNotMatch(js, /ExtensionInstallForcelist/);
   });
 });
+
+describe('today session reopen is visible and honest', () => {
+  it('does not call history session reopen a live work-site restore', () => {
+    const js = fs.readFileSync(path.join(__dirname, '../src/renderer/renderer.js'), 'utf8');
+    const css = fs.readFileSync(path.join(__dirname, '../src/renderer/styles.css'), 'utf8');
+    assert.match(js, /重开本时段访问过的网址/);
+    assert.match(js, /hour-reopen/);
+    assert.match(js, /按浏览历史用系统默认浏览器打开网址，不是恢复当时已打开的页签/);
+    assert.match(js, /不是恢复当时的窗口、分组或登录状态/);
+    assert.doesNotMatch(js, /恢复整段工作现场/);
+    assert.match(js, /保存已打开的页签需要已配对/);
+    assert.match(css, /hour-label \.restore-btn \{[^}]*opacity:\s*1/s);
+    assert.doesNotMatch(css, /hour-label:hover \.restore-btn/);
+  });
+});

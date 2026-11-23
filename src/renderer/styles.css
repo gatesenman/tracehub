@@ -819,9 +819,9 @@ mark { background: var(--gold); color: #10131c; border-radius: 3px; padding: 0 2
 .icon-btn.active { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2) inset; color: var(--accent2); }
 
 /* "Reopen this hour" only appears when the hour header is hovered/focused */
-.hour-label .restore-btn { opacity: 0; transition: opacity 0.12s ease; }
-.hour-label:hover .restore-btn,
-.hour-label .restore-btn:focus-visible { opacity: 1; }
+.hour-label .restore-btn { opacity: 1; }
+.hour-detail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.hour-row .hour-reopen { flex: 0 0 auto; margin-left: 4px; font-size: 11px; padding: 0 6px; height: 20px; }
 
 /* Letter avatar fallback when a favicon fails to load */
 .favicon.letter {
