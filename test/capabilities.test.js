@@ -17,7 +17,8 @@ describe('live-tab capabilities (no extension vs paired)', () => {
     assert.equal(d.canCloseLiveTabs, false);
     const lists = cap.withoutExtensionCapabilities();
     assert.ok(lists.available.some((s) => /历史/.test(s)));
-    assert.ok(lists.unavailable.some((s) => /已打开的页签/.test(s)));
+    assert.ok(lists.unavailable.some((s) => /tabId|分组|实时/.test(s)));
+    assert.ok(lists.available.some((s) => /会话文件/.test(s)));
   });
 
   it('recent extension activity is required to claim live capture/restore/close', () => {

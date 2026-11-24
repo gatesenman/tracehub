@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { queryAll } = require('./sqlengine');
 const core = require('../shared/snapshot-core');
+const { honestyNote } = require('../shared/session-files');
 
 function migrateSnapshotTables(db) {
   db.run(`
@@ -72,6 +73,11 @@ function migrateSnapshotTables(db) {
   for (const sql of [
     'ALTER TABLE snapshots ADD COLUMN extension_id TEXT',
     'ALTER TABLE snapshots ADD COLUMN audience_browser TEXT',
+    'ALTER TABLE snapshots ADD COLUMN origin_locked INTEGER DEFAULT 0',
+    'ALTER TABLE snapshots ADD COLUMN origin_stale INTEGER DEFAULT 0',
+    'ALTER TABLE snapshots ADD COLUMN origin_mtime INTEGER',
+    'ALTER TABLE snapshots ADD COLUMN origin_file TEXT',
+    'ALTER TABLE snapshots ADD COLUMN origin_note TEXT',
   ]) {
     try { db.run(sql); } catch (e) { /* exists */ }
   }
@@ -99,16 +105,29 @@ function saveSnapshot(store, raw, extras = {}) {
   const db = store.db;
   db.run('BEGIN');
   try {
+    const origin = core.sanitizeOrigin(normalized.origin) || null;
+    const originNote = origin ? honestyNote(origin) : '';
+    const rawJson = {
+      schemaVersion: normalized.schemaVersion,
+      capturedAt: normalized.capturedAt,
+      origin,
+    };
     db.run(
       `INSERT INTO snapshots(id, created_at, title, source, browser_id, browser_name, profile,
-        persisted, close_status, tab_count, raw_json, extension_id, audience_browser)
-       VALUES(?, ?, ?, ?, ?, ?, ?, 0, 'none', ?, ?, ?, ?)`,
+        persisted, close_status, tab_count, raw_json, extension_id, audience_browser,
+        origin_locked, origin_stale, origin_mtime, origin_file, origin_note)
+       VALUES(?, ?, ?, ?, ?, ?, ?, 0, 'none', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, createdAt, normalized.title, normalized.source,
         normalized.browserId, normalized.browserName, normalized.profile,
-        normalized.tabCount, JSON.stringify({ schemaVersion: normalized.schemaVersion, capturedAt: normalized.capturedAt }),
+        normalized.tabCount, JSON.stringify(rawJson),
         extras.extensionId || normalized.extensionId || '',
         extras.audienceBrowser || normalized.browserId || '',
+        origin && origin.locked ? 1 : 0,
+        origin && origin.stale ? 1 : 0,
+        origin && origin.sourceMtime != null ? origin.sourceMtime : null,
+        origin ? (origin.sourceFileBase || '') : '',
+        originNote,
       ]
     );
     for (const w of normalized.windows) {
@@ -243,9 +262,28 @@ function hydrate(store, s) {
     tabCount: Number(s.tab_count) || core.countTabs(windowList),
     extensionId: s.extension_id || '',
     audienceBrowser: s.audience_browser || s.browser_id || '',
+    origin: originFromRow(s),
     windows: windowList,
   };
 }
+
+function originFromRow(s) {
+  let fromJson = null;
+  try {
+    const raw = s.raw_json ? JSON.parse(s.raw_json) : null;
+    if (raw && raw.origin) fromJson = core.sanitizeOrigin(raw.origin);
+  } catch (e) { /* ignore */ }
+  if (s.source !== 'session-file' && !fromJson) return null;
+  const origin = fromJson || core.sanitizeOrigin({
+    locked: s.origin_locked,
+    stale: s.origin_stale,
+    sourceMtime: s.origin_mtime,
+    sourceFileBase: s.origin_file,
+  });
+  if (origin && s.origin_note) origin.note = s.origin_note;
+  return origin;
+}
+
 
 function listSnapshots(store, limit = 100) {
   const rows = queryAll(
@@ -268,6 +306,7 @@ function listSnapshots(store, limit = 100) {
     aiError: r.ai_error || '',
     tabCount: Number(r.tab_count) || 0,
     extensionId: r.extension_id || '',
+    origin: r.source === 'session-file' ? originFromRow(r) : null,
   }));
 }
 

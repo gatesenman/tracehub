@@ -99,4 +99,7 @@ contextBridge.exposeInMainWorld('api', {
   snapshotRestorePlan: (opts) => ipcRenderer.invoke('snapshot:restore-plan', opts),
   snapshotRestoreBatch: (opts) => ipcRenderer.invoke('snapshot:restore-batch', opts),
   snapshotAI: (id, includeBody) => ipcRenderer.invoke('snapshot:ai', { id, includeBody }),
+  sessionFileListProfiles: () => ipcRenderer.invoke('sessionfile:list-profiles'),
+  sessionFilePreview: (key) => ipcRenderer.invoke('sessionfile:preview', { key }),
+  sessionFileSave: (opts) => ipcRenderer.invoke('sessionfile:save', opts),
 });

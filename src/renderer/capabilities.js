@@ -26,6 +26,8 @@
       canCaptureLiveTabs: recentlySeen,
       canRestoreLayout: recentlySeen,
       canCloseLiveTabs: recentlySeen,
+      canReadSessionFiles: true,
+      canReopenSessionFileByWindow: true,
       canReopenHistoryUrls: true,
       canImportSnapshotJson: true,
       canOpenSnapshotUrlsInDefaultBrowser: true,
@@ -78,7 +80,7 @@
   }
 
   function historySessionDisclaimer() {
-    return '这是根据浏览历史打开网址，不是恢复浏览器里当前已打开的页签，也不会恢复窗口、分组、固定或登录状态。将使用系统默认浏览器打开（最多 30 个）。若要保存或按原布局恢复活动页签，需要安装并配对 Chrome / Edge 扩展。';
+    return '这是根据浏览历史打开网址，不是恢复浏览器里当前已打开的页签，也不会恢复窗口、分组、固定或登录状态。将使用系统默认浏览器打开（最多 30 个）。若要尽量读取当时已打开的页签，可用「从会话文件读取」（无需扩展，可能是旧档）。要更接近实时的页签、按分组恢复和按页签关闭，需要安装并配对 Chrome / Edge 扩展。';
   }
 
   function extensionSetupSteps() {
@@ -111,13 +113,15 @@
       available: [
         '查看和搜索已同步的浏览历史',
         '按今日或时段，把历史里的网址用系统默认浏览器重新打开',
+        '手动从 Chrome / Edge 会话文件读取页签并预览后保存（无需扩展；可能不是此刻页签条，锁定时可能读到旧档或失败）',
+        '将会话文件快照按窗口重新打开网址（不能恢复分组、固定或登录态）',
         '导入以前导出的 JSON 快照，并用默认浏览器打开其中的网址（不恢复窗口和分组）',
         '收藏、稍后读、备份和导出',
       ],
       unavailable: [
-        '读取当前真实已打开的页签（不会从历史猜测）',
-        '按窗口、分组、固定状态恢复活动会话',
-        '由扩展批量关闭已打开的页签',
+        '与扩展同等的实时页签条、标签分组和窗口形态',
+        '按 tabId 核对后安全关闭已打开的单个页签（需要扩展）',
+        'Firefox 活动页签（本轮不在范围内）',
       ],
     };
   }

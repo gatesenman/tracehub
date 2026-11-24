@@ -7,6 +7,7 @@ const snap = require('./snapshot-store');
 const core = require('../shared/snapshot-core');
 const { isRestorableUrl, sanitizeAiList } = require('../shared/close-guard');
 const extSession = require('../shared/extension-session');
+const sessionFile = require('./session-file-service');
 
 function extensionDir(app) {
   if (app && app.isPackaged) return path.join(process.resourcesPath, 'extension');
@@ -198,6 +199,8 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
     return publicSlice(config);
   });
 
+  sessionFile.registerSessionFileIpc({ ipcMain, store });
+
   ipcMain.handle('snapshot:list', async () => snap.listSnapshots(store));
   ipcMain.handle('snapshot:get', async (_e, id) => snap.getSnapshot(store, id));
   ipcMain.handle('snapshot:delete', async (_e, id) => {
@@ -207,7 +210,8 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
 
   ipcMain.handle('snapshot:import', async (_e, raw) => {
     try {
-      const saved = snap.saveSnapshot(store, raw, { source: 'file-import' });
+      const source = raw && raw.source === 'session-file' ? 'session-file' : 'file-import';
+      const saved = snap.saveSnapshot(store, raw, { source, origin: raw && raw.origin });
       return { ok: true, snapshot: saved };
     } catch (e) {
       return { ok: false, error: e.message || String(e) };
@@ -224,7 +228,8 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
       });
       if (canceled || !filePaths.length) return { ok: false, cancelled: true };
       const raw = JSON.parse(fs.readFileSync(filePaths[0], 'utf8'));
-      const saved = snap.saveSnapshot(store, raw, { source: 'file-import' });
+      const source = raw && raw.source === 'session-file' ? 'session-file' : 'file-import';
+      const saved = snap.saveSnapshot(store, raw, { source, origin: raw && raw.origin });
       return { ok: true, snapshot: saved };
     } catch (e) {
       return { ok: false, error: e.message || String(e) };
@@ -240,27 +245,7 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
       filters: [{ name: 'JSON', extensions: ['json'] }],
     });
     if (canceled || !filePath) return { ok: false, cancelled: true };
-    const payload = {
-      schemaVersion: core.SCHEMA_VERSION,
-      source: s.source || 'file-import',
-      title: s.title,
-      capturedAt: s.createdAt,
-      browser: { id: s.browserId, name: s.browserName, profile: s.profile },
-      windows: s.windows.map((win) => ({
-        windowId: win.windowId,
-        focused: win.focused,
-        incognito: win.incognito,
-        type: win.type,
-        state: win.state,
-        left: win.left, top: win.top, width: win.width, height: win.height,
-        tabs: win.tabs.map((t) => ({
-          tabId: t.tabId, index: t.tabIndex, url: t.url, title: t.title,
-          pinned: t.pinned, active: t.active, discarded: t.discarded,
-          favIconUrl: t.favicon, groupTitle: t.groupTitle, groupColor: t.groupColor,
-          category: t.category, tags: t.tags, purpose: t.purpose, summary: t.summary, userGroup: t.userGroup,
-        })),
-      })),
-    };
+    const payload = sessionFile.exportableSnapshot(s);
     fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
     return { ok: true, filePath };
   });
@@ -279,12 +264,15 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
     const s = snap.getSnapshot(store, id);
     const gate = core.assertCloseable(s, { userConfirmed, ackUnsavedRisk });
     if (!gate.ok) return { ok: false, error: gate.error, closeable: false };
-    if (s.source === 'file-import' || !s.extensionId) {
+    if (s.source !== 'extension' || !s.extensionId) {
       return {
         ok: false,
-        error: '这份快照不是由已配对的扩展写入的（或来自 JSON 导入），应用不能代为关闭浏览器页签。请在对应浏览器里手动关闭。快照仍然保留。',
+        error: s && s.source === 'session-file'
+          ? '会话文件快照不能按 tabId 关闭浏览器里的页签。即使快照或导入的 JSON 带有 id，也不会发出关闭指令。请在浏览器中手动关闭，或使用配对扩展采集后再关闭。'
+          : '这份快照不是由已配对的扩展写入的（或来自 JSON 导入），应用不能代为关闭浏览器页签。请在对应浏览器里手动关闭。快照仍然保留。',
         closeable: false,
-        needsExtension: true,
+        needsExtension: s && s.source === 'extension',
+        via: 'none',
       };
     }
     const bridge = getBridge && getBridge();
@@ -348,6 +336,21 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
     let tabs = core.flattenTabs(s);
     if (group) tabs = tabs.filter((t) => (t.userGroup || t.category) === group);
     const plan = core.batchRestorePlan(tabs, { batchSize, offset, skipDuplicates: !!skipDuplicates });
+    if (s.source === 'session-file') {
+      const r = await sessionFile.restoreSessionFileSnapshot(s, { store });
+      return {
+        ok: !!r.ok,
+        pending: false,
+        via: r.via || 'session-file-window-reopen',
+        error: r.ok ? undefined : (r.error || r.message),
+        message: r.message,
+        plan: r.plan || plan,
+        limitation: (r.plan && r.plan.limitation) || plan.limitation,
+        opened: r.opened,
+        failed: r.failed,
+        snapshot: r.snapshot,
+      };
+    }
     const bridge = getBridge && getBridge();
     if (!s.extensionId) {
       return {

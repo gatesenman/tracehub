@@ -1158,3 +1158,7 @@ button.danger, .primary.danger { background: #b42318; color: #fff; }
 .capability-list.unavailable { color: var(--muted); }
 .setup-steps { margin: 8px 0 0 1.2em; font-size: 13px; line-height: 1.7; }
 .setup-steps li { margin: 2px 0; }
+
+.session-file-panel { border: 1px solid var(--border, #d0d5dd); border-radius: 10px; padding: 12px 14px; background: var(--card, transparent); }
+.session-file-select { min-width: 240px; max-width: 100%; margin: 8px 0; padding: 6px 8px; }
+.session-file-preview { margin-top: 8px; }

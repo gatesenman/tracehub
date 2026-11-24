@@ -3001,28 +3001,138 @@ async function showSnapshots(selectId) {
   } catch (e) { bridgeDesc = null; }
   body.appendChild(snapIntro(bridgeDesc));
   if (!snapState.list.length) {
-    body.appendChild(emptyState('layers', '还没有页签快照。请按上方步骤安装并配对 Chrome / Edge 扩展，保存当前已打开的页签；或导入以前导出的 JSON。不会从浏览历史猜测活动标签。', '打开扩展目录', () => hub.openExtensionDir()));
+    const ui = window.TraceHubSessionFileUi;
+    body.appendChild(emptyState('layers', ui ? ui.emptyWorkspaceHint() : '还没有页签快照。可先从会话文件读取（无需扩展），或安装扩展。不会从浏览历史猜测活动标签。', '从会话文件读取', () => startSessionFileCapture()));
     return;
   }
   const id = selectId || (snapState.current && snapState.current.id) || snapState.list[0].id;
   await openSnapshotDetail(id);
 }
 
+function sessionFileUi() {
+  return window.TraceHubSessionFileUi || null;
+}
+
+function startSessionFileCapture() {
+  showSessionFileCapture().catch((e) => toast('无法打开会话文件读取：' + (e && e.message ? e.message : String(e))));
+}
+
+async function showSessionFileCapture() {
+  const ui = sessionFileUi();
+  const body = document.getElementById('contentBody');
+  const panel = el('div', 'dash-section session-file-panel');
+  panel.appendChild(el('div', 'dash-title', ui ? ui.entryTitle() : '从会话文件读取页签（无需扩展）'));
+  panel.appendChild(el('p', 'muted', ui ? ui.entryIntro() : ''));
+  panel.appendChild(el('p', 'muted', ui ? ui.previewFirstHint() : '请先预览再保存。'));
+  const status = el('div', 'muted', '正在列出本机 Chrome / Edge 配置（只读，不会自动保存）…');
+  panel.appendChild(status);
+  const select = el('select', 'session-file-select');
+  panel.appendChild(select);
+  const previewBox = el('div', 'session-file-preview');
+  panel.appendChild(previewBox);
+  const bar = el('div', 'snap-toolbar');
+  const scanBtn = el('button', null, '刷新配置列表');
+  const prevBtn = el('button', 'primary', '预览');
+  const saveBtn = el('button', 'primary', ui ? ui.saveConfirmLabel() : '确认保存这份会话快照');
+  saveBtn.disabled = true;
+  bar.appendChild(scanBtn); bar.appendChild(prevBtn); bar.appendChild(saveBtn);
+  panel.appendChild(bar);
+  // Insert at the top of the snapshot view, after the existing intro if present.
+  const intro = body.querySelector('.dash-section');
+  if (intro && intro.parentNode === body) body.insertBefore(panel, intro.nextSibling);
+  else body.insertBefore(panel, body.firstChild);
+
+  let lastPreview = null;
+  async function loadProfiles() {
+    status.textContent = '正在列出本机 Chrome / Edge 配置（只读）…';
+    select.innerHTML = '';
+    const r = await hub.sessionFileListProfiles();
+    if (!r.ok) {
+      status.textContent = r.error || '无法列出配置';
+      return;
+    }
+    const profiles = r.profiles || [];
+    if (!profiles.length) {
+      status.textContent = '没有发现带会话文件的 Chrome / Edge 配置。Firefox 本轮不在范围内。也可以稍后安装扩展。';
+      return;
+    }
+    for (const p of profiles) {
+      const opt = document.createElement('option');
+      opt.value = p.key;
+      opt.textContent = `${p.browserName} · ${p.profile}` + (p.hasSessionFiles ? '' : '（未发现会话文件）');
+      if (!p.hasSessionFiles) opt.disabled = true;
+      select.appendChild(opt);
+    }
+    status.textContent = r.scope || '请选择配置，先预览再决定是否保存。';
+  }
+  async function runPreview() {
+    lastPreview = null;
+    saveBtn.disabled = true;
+    previewBox.innerHTML = '';
+    const key = select.value;
+    if (!key) { toast('请先选择一个配置'); return; }
+    const r = await hub.sessionFilePreview(key);
+    if (!r.ok) {
+      previewBox.appendChild(el('p', 'warn', r.error || '预览失败'));
+      if (r.honesty) previewBox.appendChild(el('p', 'muted', r.honesty));
+      return;
+    }
+    lastPreview = r;
+    if (r.stale || r.locked) previewBox.appendChild(el('p', 'warn', r.honesty || '这是较旧的会话存档，不是此刻页签条。'));
+    else previewBox.appendChild(el('p', 'muted', r.honesty || ''));
+    previewBox.appendChild(el('p', null, `${r.browserName || ''} ${r.profile || ''} · ${r.windowCount} 个窗口 · ${r.tabCount} 个 http(s) 页签` + (r.origin && r.origin.sourceFileBase ? ` · 来源文件 ${r.origin.sourceFileBase}` : '') + (r.origin && r.origin.sourceMtime ? ` · 文件时间 ${new Date(r.origin.sourceMtime).toLocaleString('zh-CN')}` : '') + (r.locked ? ' · 已锁定并回退' : '') + (r.stale ? ' · 旧档' : '')));
+    for (const w of r.windows || []) {
+      const sec = el('div', 'snap-group');
+      sec.appendChild(el('h4', null, `窗口 ${Number(w.windowIndex) + 1}（${(w.tabs || []).length}）`));
+      for (const tab of w.tabs || []) {
+        const row = el('div', 'snap-tab');
+        const title = el('div', 'title');
+        if (tab.pinned) title.appendChild(el('span', 'pill pin', '固定（仅记录，重开时不能自动固定）'));
+        title.appendChild(el('div', null, tab.title || tab.url));
+        title.appendChild(el('div', 'muted', tab.url));
+        row.appendChild(title);
+        sec.appendChild(row);
+      }
+      previewBox.appendChild(sec);
+    }
+    saveBtn.disabled = false;
+  }
+  scanBtn.onclick = () => loadProfiles().catch((e) => { status.textContent = e.message || String(e); });
+  prevBtn.onclick = () => runPreview().catch((e) => toast(e.message || String(e)));
+  saveBtn.onclick = async () => {
+    if (!lastPreview || !lastPreview.previewId) { toast('请先预览'); return; }
+    const ok = await askConfirm((lastPreview.honesty || '') + ' 确认把这次预览到的页签保存为本地快照？不会关闭浏览器，也不会自动采集。', ui ? ui.saveConfirmLabel() : '确认保存');
+    if (!ok) return;
+    const r = await hub.sessionFileSave({ previewId: lastPreview.previewId, confirmed: true });
+    if (!r.ok) { toast(r.error || '保存失败'); return; }
+    toast(r.message || '已保存会话文件快照');
+    showSnapshots(r.snapshot && r.snapshot.id);
+  };
+  await loadProfiles();
+}
+
 function snapIntro(bridgeDesc) {
   const cap = window.TraceHubCapabilities;
+  const ui = sessionFileUi();
   const box = el('div', 'dash-section');
   box.appendChild(el('div', 'dash-title', '关机前整理（手动，不接管系统关机）'));
-  box.appendChild(el('p', 'muted', '场景：关机前开了很多页签，不敢关。先把「真实已打开的页签」保存成本地快照，确认成功后，再决定是否关闭。默认只保存、不关闭。不能恢复登录状态、未提交表单或滚动位置，也不能号称保护未保存表单。Firefox 活动页签本轮不在范围内，可用 JSON 导入。'));
+  box.appendChild(el('p', 'muted', '场景：关机前开了很多页签，不敢关。可以先用会话文件读取当时已写盘的页签并保存快照（无需扩展，可能不是此刻页签条）；扩展是可选增强，用于更接近实时的页签、按分组恢复和按 tabId 关闭。默认只保存、不关闭。不能恢复登录状态、未提交表单或滚动位置。Firefox 活动页签本轮不在范围内。'));
+  const sessionBar = el('div', 'snap-toolbar');
+  const sessionBtn = el('button', 'primary', ui ? ui.entryTitle() : '从会话文件读取页签（无需扩展）');
+  sessionBtn.onclick = () => startSessionFileCapture();
+  sessionBar.appendChild(sessionBtn);
+  box.appendChild(sessionBar);
+  if (ui) box.appendChild(el('p', 'muted', ui.entryIntro()));
   const d = bridgeDesc || { listening: false, recentlySeen: false };
   const portLabel = d.port ? `127.0.0.1:${d.port}` : '127.0.0.1';
   if (d.recentlySeen) {
-    box.appendChild(el('p', 'muted', `已检测到扩展最近在本机 ${portLabel} 桥上有活动。请在要整理的窗口用扩展弹出页保存真实已打开的页签。扩展选项里的端口必须与此一致。`));
+    box.appendChild(el('p', 'muted', `已检测到扩展最近在本机 ${portLabel} 桥上有活动。扩展可作为可选增强：在要整理的窗口用弹出页保存更接近实时的页签。扩展选项里的端口必须与此一致。`));
   } else if (d.listening) {
-    box.appendChild(el('p', 'warn', `本机桥已在 ${portLabel} 监听，但还没有检测到已配对的扩展。没有扩展时，无法读取或按原布局恢复当前已打开的页签，也不能由应用批量关闭它们。请把扩展选项中的端口设为 ${d.port || '与设置中相同'}。`));
+    box.appendChild(el('p', 'muted', `本机桥已在 ${portLabel} 监听，但还没有检测到已配对的扩展。没有扩展时，仍可用上方的会话文件读取。要按原布局恢复或按页签关闭，请把扩展选项中的端口设为 ${d.port || '与设置中相同'} 并完成配对。`));
   } else {
-    box.appendChild(el('p', 'warn', '页签桥当前未监听。请在设置中检查端口；若端口被占用，应用会尝试相邻端口，保存设置后可看到实际监听地址。'));
+    box.appendChild(el('p', 'muted', '页签桥当前未监听。会话文件读取不依赖页签桥。若要使用扩展，请在设置中检查端口。'));
   }
-  box.appendChild(el('div', 'dash-title', d.recentlySeen ? '扩展已连接' : '快捷安装扩展（需要你在浏览器里确认，不会静默安装）'));
+  box.appendChild(el('div', 'dash-title', d.recentlySeen ? '扩展已连接（可选增强）' : '可选：安装扩展以获得实时页签、分组恢复和按页签关闭'));
   if (cap) {
     if (!d.recentlySeen) {
       const steps = el('ol', 'setup-steps');
@@ -3031,19 +3141,19 @@ function snapIntro(bridgeDesc) {
       }
       box.appendChild(steps);
       if (cap.webStoreFutureNote) box.appendChild(el('p', 'muted', cap.webStoreFutureNote()));
-      const lists = cap.withoutExtensionCapabilities();
-      box.appendChild(el('div', 'muted', '不装扩展时仍可以使用：'));
-      const ok = el('ul', 'capability-list');
-      for (const s of lists.available) ok.appendChild(el('li', null, s));
-      box.appendChild(ok);
-      box.appendChild(el('div', 'muted', '必须安装并配对扩展才能使用：'));
-      const no = el('ul', 'capability-list unavailable');
-      for (const s of lists.unavailable) no.appendChild(el('li', null, s));
-      box.appendChild(no);
     }
+    const lists = cap.withoutExtensionCapabilities();
+    box.appendChild(el('div', 'muted', '不装扩展时可以使用：'));
+    const ok = el('ul', 'capability-list');
+    for (const s of lists.available) ok.appendChild(el('li', null, s));
+    box.appendChild(ok);
+    box.appendChild(el('div', 'muted', '仍需要扩展才能使用：'));
+    const no = el('ul', 'capability-list unavailable');
+    for (const s of lists.unavailable) no.appendChild(el('li', null, s));
+    box.appendChild(no);
   }
   const bar = el('div', 'snap-toolbar');
-  const ext = el('button', 'primary', '打开扩展目录');
+  const ext = el('button', null, '打开扩展目录');
   ext.onclick = () => hub.openExtensionDir();
   const chromePage = el('button', null, '打开 Chrome 扩展页');
   chromePage.onclick = () => openOfficialExtensionsPage('chrome');
@@ -3069,7 +3179,9 @@ function renderSnapSidebar(activeId) {
   for (const s of snapState.list) {
     const row = el('div', 'snap-card' + (s.id === activeId ? ' active' : ''));
     row.appendChild(el('div', null, s.title || '未命名快照'));
-    row.appendChild(el('div', 'meta', `${s.browserName || s.browserId || ''} ${s.profile || ''} · ${s.tabCount} 个页签 · ${s.closeStatus && s.closeStatus !== 'none' ? '关闭:' + s.closeStatus : '未关闭'}`));
+    const ui = sessionFileUi();
+    const src = ui ? ui.sourceBadgeText(s) : (s.source || '');
+    row.appendChild(el('div', 'meta', `${s.browserName || s.browserId || ''} ${s.profile || ''} · ${src} · ${s.tabCount} 个页签 · ${s.closeStatus && s.closeStatus !== 'none' ? '关闭:' + s.closeStatus : '未关闭'}`));
     row.onclick = () => openSnapshotDetail(s.id);
     box.appendChild(row);
   }
@@ -3090,21 +3202,29 @@ async function openSnapshotDetail(id) {
   body.appendChild(snapIntro(bridgeDesc));
   const head = el('div', 'dash-section');
   head.appendChild(el('div', 'dash-title', s.title));
-  head.appendChild(el('div', 'muted', `${s.browserName || ''} ${s.profile || ''} · 来源：${s.source === 'file-import' ? 'JSON 导入' : '扩展'} · ${s.tabCount} 个页签 · 关闭状态：${({ none: '未关闭', pending: '等待扩展执行', done: '已关闭', partial: '部分关闭', failed: '关闭失败', cancelled: '已取消' })[s.closeStatus || 'none'] || s.closeStatus} · AI：${s.aiStatus || 'none'}`));
+  const ui = sessionFileUi();
+  const sourceText = ui ? ui.sourceBadgeText(s) : (s.source || '');
+  head.appendChild(el('div', 'muted', `${s.browserName || ''} ${s.profile || ''} · 来源：${sourceText} · ${s.tabCount} 个页签 · 关闭状态：${({ none: '未关闭', pending: '等待扩展执行', done: '已关闭', partial: '部分关闭', failed: '关闭失败', cancelled: '已取消' })[s.closeStatus || 'none'] || s.closeStatus} · AI：${s.aiStatus || 'none'}`));
+  if (s.source === 'session-file' && s.origin) {
+    const note = s.origin.note || (ui && ui.restoreHonesty(s)) || '';
+    const cls = (s.origin.stale || s.origin.locked) ? 'warn' : 'muted';
+    if (note) head.appendChild(el('p', cls, note));
+  }
   if (s.closeError) head.appendChild(el('p', 'warn', s.closeError));
   if (s.aiError) head.appendChild(el('p', 'muted', 'AI：' + s.aiError));
   body.appendChild(head);
 
   const bar = el('div', 'snap-toolbar');
   const addBtn = (label, fn, cls) => { const b = el('button', cls || '', label); b.onclick = fn; bar.appendChild(b); return b; };
-  addBtn('按组恢复…', () => beginRestore(s, null));
-  addBtn('恢复时跳过重复项…', () => beginRestore(s, null, true));
+  const ui2 = sessionFileUi();
+  addBtn(ui2 ? ui2.restoreButtonLabel(s) : (s.source === 'session-file' ? '按窗口重新打开网址…' : '按组恢复…'), () => beginRestore(s, null));
+  if (s.source !== 'session-file') addBtn('恢复时跳过重复项…', () => beginRestore(s, null, true));
   addBtn('用默认浏览器打开网址…', () => openSnapshotUrlsInDefaultBrowser(s));
   const closeLabel = (s.closeStatus === 'partial' || s.closeStatus === 'failed') ? '重试关闭这些页签…' : '确认后关闭这些页签…';
   const closeBtn = addBtn(closeLabel, () => beginClose(s), 'danger');
-  if (!s.persisted || s.closeStatus === 'done' || s.source === 'file-import' || !s.extensionId) {
+  if (!s.persisted || s.closeStatus === 'done' || !(ui2 ? ui2.canOfferPreciseClose(s) : (s.source === 'extension' && s.extensionId))) {
     closeBtn.disabled = true;
-    if (s.source === 'file-import' || !s.extensionId) closeBtn.title = '导入的快照没有对应的扩展会话，不能远程关闭页签。请在浏览器里手动关闭。';
+    closeBtn.title = (ui2 && ui2.closeDisabledReason(s)) || '不能远程关闭页签。';
   }
   addBtn('本地域名预分类', async () => { await openSnapshotDetail(s.id); toast('保存时已完成本地预分类，可在下方改分组名'); });
   addBtn('AI 补充网站信息', () => runSnapAI(s, false), 'ai');
@@ -3192,8 +3312,9 @@ async function openSnapshotUrlsInDefaultBrowser(s) {
 }
 
 async function beginClose(s) {
-  if (s.source === 'file-import' || !s.extensionId) {
-    toast('这份快照没有对应的扩展会话，不能远程关闭页签。请在浏览器里手动关闭。');
+  const ui = sessionFileUi();
+  if (!(ui ? ui.canOfferPreciseClose(s) : (s.source === 'extension' && s.extensionId))) {
+    toast((ui && ui.closeDisabledReason(s)) || '这份快照不能按 tabId 关闭浏览器页签。');
     return;
   }
   snapState.closeId = s.id;
@@ -3232,18 +3353,25 @@ async function beginRestore(s, group, skipDuplicates = false) {
   if (!planWrap.ok) { toast(planWrap.error || '无法准备恢复'); return; }
   const plan = planWrap.plan;
   snapState.restorePlan = { id: s.id, group, skipDuplicates, offset: 0, plan };
+  const ui = sessionFileUi();
   let extNote = '';
-  try {
-    const st = await hub.bridgeStatus();
-    const d = window.TraceHubCapabilities ? window.TraceHubCapabilities.describeBridge(st) : st;
-    if (!d.recentlySeen) {
-      extNote = ' 当前还没有检测到已配对的扩展：「请扩展按布局恢复」会失败。若只想打开网址，请用「用默认浏览器打开网址」（不会恢复窗口和分组，也不会标记为扩展已恢复）。';
-    }
-  } catch (e) { /* ignore */ }
+  if (s.source === 'session-file') {
+    extNote = ' ' + ((ui && ui.restoreHonesty(s)) || plan.limitation || '');
+  } else {
+    try {
+      const st = await hub.bridgeStatus();
+      const d = window.TraceHubCapabilities ? window.TraceHubCapabilities.describeBridge(st) : st;
+      if (!d.recentlySeen) {
+        extNote = ' 当前还没有检测到已配对的扩展：「请扩展按布局恢复」会失败。若只想打开网址，请用「用默认浏览器打开网址」（不会恢复窗口和分组，也不会标记为扩展已恢复）。';
+      }
+    } catch (e) { /* ignore */ }
+  }
   document.getElementById('snapRestoreInfo').textContent =
-    `将恢复「${s.title}」${group ? '中的分组「' + group + '」' : ''}：共 ${plan.total} 个可恢复网址，本批打开 ${plan.batch.length} 个（默认每批 8 个，不会一次全部打开）。` +
+    (s.source === 'session-file'
+      ? `将按窗口重新打开「${s.title}」中的网址：共 ${plan.total} 个可恢复网址。`
+      : `将恢复「${s.title}」${group ? '中的分组「' + group + '」' : ''}：共 ${plan.total} 个可恢复网址，本批打开 ${plan.batch.length} 个（默认每批 8 个，不会一次全部打开）。`) +
     (plan.unrestorableSkipped ? `另有 ${plan.unrestorableSkipped} 个内部页无法自动打开。` : '') +
-    (plan.limitation || '') + extNote;
+    (s.source === 'session-file' ? '' : (plan.limitation || '')) + extNote;
   document.getElementById('snapRestoreModal').classList.remove('hidden');
 }
 
@@ -3256,6 +3384,7 @@ async function confirmRestore() {
     batchSize: 8, offset: ctx.offset, confirmed: true,
   });
   if (!r.ok) toast(r.error || r.message || '恢复失败');
+  else if (r.via === 'session-file-window-reopen') toast(r.message || '已按窗口请目标浏览器重新打开网址。这不是扩展按布局恢复。');
   else toast(r.message || '已向配对扩展发出恢复请求，等待执行。完成前不会标记为已恢复。');
   if (r.ok && r.plan) {
     snapState.restorePlan = {
@@ -3273,6 +3402,7 @@ async function maybeContinueRestoreAfterAck(commandResult) {
   const cap = window.TraceHubCapabilities;
   const ctx = snapState.restorePlan;
   if (!ctx || !ctx.plan || !cap || !cap.shouldOfferNextRestoreBatch) return;
+  if (commandResult && commandResult.via === 'session-file-window-reopen') return;
   if (!cap.shouldOfferNextRestoreBatch(ctx.plan, commandResult)) return;
   const remaining = ctx.plan.remaining;
   const more = await askConfirm(`上一批已经有了扩展回执。还剩 ${remaining} 个网址，是否继续请扩展打开下一批（最多 8 个）？在扩展再次回执前不会标记为已恢复。`, '打开下一批');

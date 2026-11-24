@@ -80,6 +80,48 @@ function validateSnapshotPayload(raw) {
   return { ok: true, value: raw };
 }
 
+
+function resolveSnapshotSource(src, extras = {}) {
+  const fromExtras = extras && extras.source;
+  if (fromExtras === 'extension') return 'extension';
+  if (fromExtras === 'session-file' || (src && src.source === 'session-file')) return 'session-file';
+  if (fromExtras === 'file-import' || (src && src.source === 'file-import')) return 'file-import';
+  if (src && src.source === 'extension') return 'extension';
+  return 'extension';
+}
+
+function sanitizeOrigin(origin) {
+  if (!origin || typeof origin !== 'object') return null;
+  const rawBase = String(origin.sourceFileBase || origin.sourceFile || origin.sourcePath || origin.path || '');
+  const base = rawBase.replace(/\\/g, '/').split('/').pop() || '';
+  const safeBase = base.replace(/[^\w.\u4e00-\u9fff +()-]/g, '_').slice(0, 180);
+  const mtime = Number(origin.sourceMtime);
+  return {
+    source: 'session-file',
+    locked: !!origin.locked,
+    stale: !!origin.stale,
+    sourceMtime: Number.isFinite(mtime) ? mtime : null,
+    sourceFileBase: safeBase,
+    truncated: !!origin.truncated,
+    ignoredTabGroupCommands: Number(origin.ignoredTabGroupCommands) || 0,
+  };
+}
+
+function isSessionFileSnapshot(snapshot) {
+  return !!(snapshot && snapshot.source === 'session-file');
+}
+
+function canPreciseClose(snapshot) {
+  return !!(
+    snapshot
+    && snapshot.source === 'extension'
+    && snapshot.extensionId
+    && (snapshot.persisted === true || snapshot.persisted === 1)
+    && snapshot.closeStatus !== 'done'
+    && snapshot.closeStatus !== 'cancelled'
+  );
+}
+
 function normalizeSnapshot(raw, extras = {}) {
   const checked = validateSnapshotPayload(raw);
   if (!checked.ok) throw new Error(checked.error);
@@ -91,6 +133,7 @@ function normalizeSnapshot(raw, extras = {}) {
       const url = String(t.url).trim();
       return {
         tabId: t.tabId != null ? asInt(t.tabId, null) : (t.id != null ? asInt(t.id, null) : null),
+        sessionTabId: t.sessionTabId != null ? asInt(t.sessionTabId, null) : null,
         tabIndex: t.index != null ? asInt(t.index, ti) : ti,
         url,
         title: typeof t.title === 'string' && t.title ? t.title : url,
@@ -128,10 +171,20 @@ function normalizeSnapshot(raw, extras = {}) {
       tabs,
     };
   });
-  const source = src.source === 'file-import' || extras.source === 'file-import' ? 'file-import' : 'extension';
+  const source = resolveSnapshotSource(src, extras);
+  if (source === 'session-file') {
+    for (const w of windows) {
+      for (const tab of w.tabs) {
+        if (tab.sessionTabId == null && tab.tabId != null) tab.sessionTabId = tab.tabId;
+        tab.tabId = null;
+      }
+    }
+  }
+  const origin = source === 'session-file' ? sanitizeOrigin(src.origin || extras.origin || {}) : null;
   return {
     schemaVersion: SCHEMA_VERSION,
     source,
+    origin,
     capturedAt,
     title: typeof src.title === 'string' && src.title.trim()
       ? src.title.trim()
@@ -163,6 +216,9 @@ function defaultSnapshotTitle(ts, windows) {
  */
 function assertCloseable(snapshot, { userConfirmed = false, ackUnsavedRisk = false } = {}) {
   if (!snapshot) return { ok: false, error: '没有指定快照' };
+  if (snapshot.source === 'session-file' || snapshot.source === 'file-import') {
+    return { ok: false, error: '会话文件快照和导入快照不能按 tabId 关闭浏览器里的页签。即使数据里带有 id，也不会发出关闭指令。' };
+  }
   if (snapshot.persisted !== true && snapshot.persisted !== 1) {
     return { ok: false, error: '快照尚未成功保存到本地，不能关闭浏览器页签' };
   }
@@ -309,6 +365,10 @@ module.exports = {
   SAVE_POLICY,
   domainOf,
   validateSnapshotPayload,
+  resolveSnapshotSource,
+  sanitizeOrigin,
+  isSessionFileSnapshot,
+  canPreciseClose,
   normalizeSnapshot,
   countTabs,
   defaultSnapshotTitle,
