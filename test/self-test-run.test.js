@@ -63,6 +63,7 @@ describe('runSelfTest (Node; not a packaged Windows or Chrome GUI test)', () => 
       'bridge-restore-and-close-ack',
       'backup-restore-export',
       'migration-read-later-decouple',
+      'session-file-synthetic-preview-save',
     ]) {
       assert.ok(ids.includes(need), 'missing ' + need);
     }

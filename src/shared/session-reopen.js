@@ -33,6 +33,15 @@ const FORBIDDEN_FLAG_PREFIXES = Object.freeze([
 ]);
 
 const REOPEN_LIMITATION = '将按窗口在目标浏览器中重新打开网址，不能恢复标签分组、固定状态、窗口位置/最大化、登录状态、未提交表单或滚动位置。这不是扩展按布局恢复。';
+const LARGE_REOPEN_THRESHOLD = 30;
+const DEFAULT_MAX_URLS = 200;
+
+function largeReopenConfirmText(plan) {
+  const n = (plan && (plan.urlCount || plan.total)) || 0;
+  const w = (plan && plan.windowCount) || 0;
+  const clipped = !!(plan && plan.windows && plan.windows.some((x) => x.clipped));
+  return `即将一次性按窗口打开 ${n} 个网址（${w} 个窗口）。数量较多，需要再次确认后才会启动浏览器。无法恢复分组、固定、登录或表单。` + (clipped ? ' 超过上限的网址已被截掉，不会全部打开。' : '');
+}
 
 function assertSafeProfileDirectory(name) {
   const s = String(name || '');
@@ -107,13 +116,14 @@ function windowsFromSnapshot(snapshot) {
   return (snapshot && snapshot.windows) || [];
 }
 
-function planWindowReopen(snapshot, { maxUrls = 200 } = {}) {
+function planWindowReopen(snapshot, { maxUrls = DEFAULT_MAX_URLS } = {}) {
   const windows = [];
   let skippedNonHttp = 0;
   let pinnedRecorded = 0;
   let total = 0;
   for (const w of windowsFromSnapshot(snapshot)) {
     const urls = [];
+    const tabRowIds = [];
     for (const t of w.tabs || []) {
       if (t && t.pinned) pinnedRecorded += 1;
       const url = t && t.url;
@@ -123,6 +133,7 @@ function planWindowReopen(snapshot, { maxUrls = 200 } = {}) {
       }
       try {
         urls.push(assertSafeHttpUrl(url));
+        tabRowIds.push(t.id || null);
       } catch (e) {
         skippedNonHttp += 1;
       }
@@ -132,7 +143,7 @@ function planWindowReopen(snapshot, { maxUrls = 200 } = {}) {
       windows.push({
         windowIndex: w.windowIndex,
         windowId: w.windowId,
-        tabRowIds: (w.tabs || []).filter((t) => t && RESTORABLE_URL.test(t.url || '')).map((t) => t.id).filter(Boolean),
+        tabRowIds,
         urls,
       });
     }
@@ -143,16 +154,23 @@ function planWindowReopen(snapshot, { maxUrls = 200 } = {}) {
     if (used >= maxUrls) break;
     const urls = w.urls.slice(0, Math.max(0, maxUrls - used));
     used += urls.length;
-    clipped.push({ ...w, urls, clipped: urls.length < w.urls.length });
+    clipped.push({ ...w, urls, tabRowIds: w.tabRowIds.slice(0, urls.length), clipped: urls.length < w.urls.length });
   }
   return {
     windows: clipped,
     windowCount: clipped.length,
     urlCount: used,
     skippedNonHttp,
+    skippedLimit: total - used,
+    skipped: skippedNonHttp + total - used,
     pinnedRecorded,
     limitation: REOPEN_LIMITATION,
     via: 'session-file-window-reopen',
+    total: used,
+    needsSecondConfirm: used >= LARGE_REOPEN_THRESHOLD,
+    largeThreshold: LARGE_REOPEN_THRESHOLD,
+    maxUrls,
+    secondConfirmText: used >= LARGE_REOPEN_THRESHOLD ? largeReopenConfirmText({ urlCount: used, windowCount: clipped.length, windows: clipped }) : '',
   };
 }
 
@@ -209,18 +227,23 @@ async function runSessionReopenLaunches(built, spawnFn) {
   if (!built || !built.ok) return { ok: false, via: 'session-file-window-reopen', error: (built && built.error) || '无法启动', opened: 0, failed: 0, windows: 0 };
   const opened = [];
   const failed = [];
+  const openedTabRowIds = [];
+  const failedTabRowIds = [];
   let windowOk = 0;
   for (const launch of built.launches) {
     try {
       const args = assertSafeLaunchArgs(launch.args);
       const r = await spawnFn(launch.exe, args);
       if (r && r.ok === false) {
+        failedTabRowIds.push(...(launch.tabRowIds || []).filter(Boolean));
         failed.push({ windowIndex: launch.windowIndex, error: r.error || '启动失败', urls: launch.args.filter((a) => RESTORABLE_URL.test(a)) });
       } else {
         windowOk += 1;
+        openedTabRowIds.push(...(launch.tabRowIds || []).filter(Boolean));
         for (const a of args) if (RESTORABLE_URL.test(a)) opened.push(a);
       }
     } catch (e) {
+      failedTabRowIds.push(...(launch.tabRowIds || []).filter(Boolean));
       failed.push({ windowIndex: launch.windowIndex, error: e.message || String(e) });
     }
   }
@@ -231,6 +254,8 @@ async function runSessionReopenLaunches(built, spawnFn) {
     via: 'session-file-window-reopen',
     pending: false,
     opened: openedN,
+    openedTabRowIds,
+    failedTabRowIds,
     failed: failedN,
     windows: windowOk,
     failedWindows: failed,
@@ -244,6 +269,9 @@ async function runSessionReopenLaunches(built, spawnFn) {
 module.exports = {
   PROFILE_DIR_RE,
   REOPEN_LIMITATION,
+  LARGE_REOPEN_THRESHOLD,
+  DEFAULT_MAX_URLS,
+  largeReopenConfirmText,
   ALLOWED_BROWSER_IDS,
   assertSafeProfileDirectory,
   assertSafeHttpUrl,

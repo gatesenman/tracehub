@@ -36,7 +36,13 @@
     const origin = snapshot && snapshot.origin;
     const base = sourceLabel(snapshot);
     if (snapshot && snapshot.source === 'session-file' && origin) {
-      if (origin.stale || origin.locked) {
+      if (origin.lastSession && !origin.stale && !origin.locked) {
+        return `${base} · 上次会话`;
+      }
+      if (origin.racy) {
+        return `${base} · 读盘时文件仍在变化`;
+      }
+      if (origin.stale || origin.locked || origin.incompleteNewest) {
         return origin.sourceMtime
           ? `${base} · 旧档，不是此刻页签条`
           : `${base} · 可能不是此刻页签条`;
@@ -66,6 +72,21 @@
     return !!(snapshot && snapshot.source === 'extension' && snapshot.extensionId && snapshot.persisted && snapshot.closeStatus !== 'done');
   }
 
+  function needsLargeReopenConfirm(plan) {
+    if (!plan) return false;
+    if (plan.needsSecondConfirm) return true;
+    const n = plan.urlCount != null ? plan.urlCount : plan.total;
+    return Number(n) >= 30;
+  }
+
+  function largeReopenConfirmText(plan) {
+    const n = (plan && (plan.urlCount || plan.total)) || 0;
+    const w = (plan && plan.windowCount) || 0;
+    return plan && plan.secondConfirmText
+      ? plan.secondConfirmText
+      : `即将一次性按窗口打开 ${n} 个网址（${w} 个窗口）。数量较多，需要再次确认后才会启动浏览器。无法恢复分组、固定、登录或表单。`;
+  }
+
   function restoreHonesty(snapshot) {
     if (snapshot && snapshot.source === 'session-file') {
       return '将按窗口在目标浏览器中重新打开网址，不能恢复标签分组、固定状态、窗口位置、登录状态、未提交表单或滚动位置。这不是扩展按布局恢复。';
@@ -75,6 +96,39 @@
 
   function emptyWorkspaceHint() {
     return '还没有页签快照。可先用「从会话文件读取页签（无需扩展）」选择 Chrome / Edge 配置、预览再保存；或安装并配对扩展以读取更接近实时的页签。不会从浏览历史猜测活动标签。';
+  }
+
+  function previewHonestyTone(origin, preview) {
+    const o = origin || (preview && preview.origin) || {};
+    const p = preview || {};
+    if (p.stale || p.locked || o.stale || o.locked || o.lastSession || o.racy || o.incompleteNewest || o.truncated) {
+      return 'warn';
+    }
+    return 'muted';
+  }
+
+  function profileListStatus(profiles, scope) {
+    const list = Array.isArray(profiles) ? profiles : [];
+    const usable = list.filter((p) => p && p.hasSessionFiles);
+    if (!list.length) {
+      return {
+        tone: 'muted',
+        canPreview: false,
+        text: '没有发现 Chrome / Edge 配置目录。Firefox 本轮不在范围内。也可以稍后安装扩展。',
+      };
+    }
+    if (!usable.length) {
+      return {
+        tone: 'warn',
+        canPreview: false,
+        text: '找到了配置目录，但其中没有可读取的会话文件。不会把空列表当作成功。Firefox 本轮不在范围内。',
+      };
+    }
+    return {
+      tone: 'muted',
+      canPreview: true,
+      text: scope || '请选择配置，先预览再决定是否保存。',
+    };
   }
 
   return {
@@ -88,6 +142,10 @@
     closeDisabledReason,
     canOfferPreciseClose,
     restoreHonesty,
+    needsLargeReopenConfirm,
+    largeReopenConfirmText,
     emptyWorkspaceHint,
+    previewHonestyTone,
+    profileListStatus,
   };
 });

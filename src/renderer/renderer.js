@@ -3052,8 +3052,11 @@ async function showSessionFileCapture() {
       return;
     }
     const profiles = r.profiles || [];
-    if (!profiles.length) {
-      status.textContent = '没有发现带会话文件的 Chrome / Edge 配置。Firefox 本轮不在范围内。也可以稍后安装扩展。';
+    const listed = ui && ui.profileListStatus ? ui.profileListStatus(profiles, r.scope) : null;
+    if (listed && !listed.canPreview && !profiles.length) {
+      status.textContent = listed.text;
+      prevBtn.disabled = true;
+      saveBtn.disabled = true;
       return;
     }
     for (const p of profiles) {
@@ -3063,7 +3066,13 @@ async function showSessionFileCapture() {
       if (!p.hasSessionFiles) opt.disabled = true;
       select.appendChild(opt);
     }
-    status.textContent = r.scope || '请选择配置，先预览再决定是否保存。';
+    if (listed) {
+      status.textContent = listed.text;
+      prevBtn.disabled = !listed.canPreview;
+      if (!listed.canPreview) saveBtn.disabled = true;
+    } else {
+      status.textContent = r.scope || '请选择配置，先预览再决定是否保存。';
+    }
   }
   async function runPreview() {
     lastPreview = null;
@@ -3078,8 +3087,8 @@ async function showSessionFileCapture() {
       return;
     }
     lastPreview = r;
-    if (r.stale || r.locked) previewBox.appendChild(el('p', 'warn', r.honesty || '这是较旧的会话存档，不是此刻页签条。'));
-    else previewBox.appendChild(el('p', 'muted', r.honesty || ''));
+    const tone = (ui && ui.previewHonestyTone) ? ui.previewHonestyTone(r.origin, r) : ((r.stale || r.locked) ? 'warn' : 'muted');
+    if (r.honesty) previewBox.appendChild(el('p', tone, r.honesty));
     previewBox.appendChild(el('p', null, `${r.browserName || ''} ${r.profile || ''} · ${r.windowCount} 个窗口 · ${r.tabCount} 个 http(s) 页签` + (r.origin && r.origin.sourceFileBase ? ` · 来源文件 ${r.origin.sourceFileBase}` : '') + (r.origin && r.origin.sourceMtime ? ` · 文件时间 ${new Date(r.origin.sourceMtime).toLocaleString('zh-CN')}` : '') + (r.locked ? ' · 已锁定并回退' : '') + (r.stale ? ' · 旧档' : '')));
     for (const w of r.windows || []) {
       const sec = el('div', 'snap-group');
@@ -3207,7 +3216,7 @@ async function openSnapshotDetail(id) {
   head.appendChild(el('div', 'muted', `${s.browserName || ''} ${s.profile || ''} · 来源：${sourceText} · ${s.tabCount} 个页签 · 关闭状态：${({ none: '未关闭', pending: '等待扩展执行', done: '已关闭', partial: '部分关闭', failed: '关闭失败', cancelled: '已取消' })[s.closeStatus || 'none'] || s.closeStatus} · AI：${s.aiStatus || 'none'}`));
   if (s.source === 'session-file' && s.origin) {
     const note = s.origin.note || (ui && ui.restoreHonesty(s)) || '';
-    const cls = (s.origin.stale || s.origin.locked) ? 'warn' : 'muted';
+    const cls = (ui && ui.previewHonestyTone) ? ui.previewHonestyTone(s.origin, s) : ((s.origin.stale || s.origin.locked) ? 'warn' : 'muted');
     if (note) head.appendChild(el('p', cls, note));
   }
   if (s.closeError) head.appendChild(el('p', 'warn', s.closeError));
@@ -3366,22 +3375,32 @@ async function beginRestore(s, group, skipDuplicates = false) {
       }
     } catch (e) { /* ignore */ }
   }
+  const planTotal = plan.total != null ? plan.total : (plan.urlCount || 0);
   document.getElementById('snapRestoreInfo').textContent =
     (s.source === 'session-file'
-      ? `将按窗口重新打开「${s.title}」中的网址：共 ${plan.total} 个可恢复网址。`
-      : `将恢复「${s.title}」${group ? '中的分组「' + group + '」' : ''}：共 ${plan.total} 个可恢复网址，本批打开 ${plan.batch.length} 个（默认每批 8 个，不会一次全部打开）。`) +
+      ? `将按窗口重新打开「${s.title}」中的网址：共 ${planTotal} 个可恢复网址（${plan.windowCount || 0} 个窗口）。` + (plan.needsSecondConfirm ? ' 数量较多，确认后还会再问一次。' : '')
+      : `将恢复「${s.title}」${group ? '中的分组「' + group + '」' : ''}：共 ${planTotal} 个可恢复网址，本批打开 ${(plan.batch && plan.batch.length) || 0} 个（默认每批 8 个，不会一次全部打开）。`) +
+    (plan.skipped ? ` 已跳过 ${plan.skipped} 个网址（上限截断 ${plan.skippedLimit || 0} 个）。` : '') +
     (plan.unrestorableSkipped ? `另有 ${plan.unrestorableSkipped} 个内部页无法自动打开。` : '') +
     (s.source === 'session-file' ? '' : (plan.limitation || '')) + extNote;
   document.getElementById('snapRestoreModal').classList.remove('hidden');
 }
 
 async function confirmRestore() {
-  document.getElementById('snapRestoreModal').classList.add('hidden');
   const ctx = snapState.restorePlan;
   if (!ctx) return;
+  const plan = ctx.plan || {};
+  const ui = sessionFileUi();
+  let largeConfirmed = false;
+  if (plan.via === 'session-file-window-reopen' && ui && ui.needsLargeReopenConfirm(plan)) {
+    const go = await askConfirm(ui.largeReopenConfirmText(plan), '仍然打开');
+    if (!go) { toast('已取消打开'); return; }
+    largeConfirmed = true;
+  }
+  document.getElementById('snapRestoreModal').classList.add('hidden');
   const r = await hub.snapshotRestoreBatch({
     id: ctx.id, group: ctx.group, skipDuplicates: ctx.skipDuplicates,
-    batchSize: 8, offset: ctx.offset, confirmed: true,
+    batchSize: 8, offset: ctx.offset, confirmed: true, largeConfirmed,
   });
   if (!r.ok) toast(r.error || r.message || '恢复失败');
   else if (r.via === 'session-file-window-reopen') toast(r.message || '已按窗口请目标浏览器重新打开网址。这不是扩展按布局恢复。');

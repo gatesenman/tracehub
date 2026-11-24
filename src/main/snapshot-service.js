@@ -323,13 +323,14 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
   ipcMain.handle('snapshot:restore-plan', async (_e, { id, group, skipDuplicates, batchSize, offset }) => {
     const s = snap.getSnapshot(store, id);
     if (!s || !s.persisted) return { ok: false, error: '找不到已保存的快照' };
+    if (s.source === 'session-file') return sessionFile.sessionFileRestorePlan(s);
     let tabs = core.flattenTabs(s);
     if (group) tabs = tabs.filter((t) => (t.userGroup || t.category) === group);
     const plan = core.batchRestorePlan(tabs, { batchSize, offset, skipDuplicates: !!skipDuplicates });
     return { ok: true, plan, limitation: plan.limitation, snapshotTitle: s.title };
   });
 
-  ipcMain.handle('snapshot:restore-batch', async (_e, { id, group, skipDuplicates, batchSize, offset, confirmed }) => {
+  ipcMain.handle('snapshot:restore-batch', async (_e, { id, group, skipDuplicates, batchSize, offset, confirmed, largeConfirmed }) => {
     if (!confirmed) return { ok: false, error: '恢复已取消' };
     const s = snap.getSnapshot(store, id);
     if (!s || !s.persisted) return { ok: false, error: '找不到已保存的快照' };
@@ -337,7 +338,7 @@ function registerSnapshotIpc({ ipcMain, store, config, getBridge, dialog, shell,
     if (group) tabs = tabs.filter((t) => (t.userGroup || t.category) === group);
     const plan = core.batchRestorePlan(tabs, { batchSize, offset, skipDuplicates: !!skipDuplicates });
     if (s.source === 'session-file') {
-      const r = await sessionFile.restoreSessionFileSnapshot(s, { store });
+      const r = await sessionFile.restoreSessionFileSnapshot(s, { store, largeConfirmed: !!largeConfirmed });
       return {
         ok: !!r.ok,
         pending: false,

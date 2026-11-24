@@ -82,3 +82,102 @@ describe('SNSS parser', () => {
     assert.equal(r.string16(), '中');
   });
 });
+
+describe('SNSS parser vs official Chromium versions and layouts', () => {
+  it('accepts current plaintext version 3 and ignores the initial-state marker (id 255)', () => {
+    const marker = b.cmd(255, Buffer.alloc(0));
+    const buf = b.snss([
+      marker,
+      b.tabWindow(1, 1),
+      b.nav(1, 0, 'https://marker.example/', 'ok'),
+      b.selectedNav(1, 0),
+      b.selectedTab(1, 0),
+    ], 3);
+    const parsed = parseSession(buf);
+    assert.equal(parsed.version, 3);
+    assert.equal(parsed.hasMarker, true);
+    assert.equal(parsed.windows.length, 1);
+    assert.equal(parsed.windows[0].tabs[0].url, 'https://marker.example/');
+  });
+
+  it('rejects encrypted SNSS versions 2, 4 and 5 without inventing tabs', () => {
+    for (const ver of [2, 4, 5]) {
+      const raw = b.snss([
+        b.tabWindow(1, 1),
+        b.nav(1, 0, 'https://secret.example/', 'no'),
+        b.selectedNav(1, 0),
+      ], ver);
+      assert.throws(() => readCommands(raw), /加密|无法解密|不支持/);
+      assert.throws(() => parseSession(raw), /加密|无法解密|不支持/);
+    }
+  });
+
+  it('parses legacy plaintext version 1 as a best-effort and marks it legacy', () => {
+    const buf = b.snss([
+      b.tabWindow(1, 1),
+      b.nav(1, 0, 'https://legacy.example/', 'oldfmt'),
+      b.selectedNav(1, 0),
+      b.selectedTab(1, 0),
+    ], 1);
+    const parsed = parseSession(buf);
+    assert.equal(parsed.version, 1);
+    assert.equal(parsed.legacyVersion, true);
+    assert.equal(parsed.windows[0].tabs[0].url, 'https://legacy.example/');
+  });
+
+  it('ignores invalid SessionID values (0 and negative) and does not invent tab 0', () => {
+    const buf = b.snss([
+      b.tabWindow(0, 0),
+      b.nav(0, 0, 'https://zero.example/', 'zero'),
+      b.tabWindow(-1, -2),
+      b.nav(-2, 0, 'https://neg.example/', 'neg'),
+      b.tabWindow(1, 5),
+      b.nav(5, 0, 'https://ok.example/', 'ok'),
+      b.selectedNav(5, 0),
+      b.selectedTab(1, 0),
+    ]);
+    const parsed = parseSession(buf);
+    assert.equal(parsed.windows.length, 1);
+    assert.equal(parsed.windows[0].id, 1);
+    assert.deepEqual(parsed.windows[0].tabs.map((t) => t.url), ['https://ok.example/']);
+  });
+
+  it('reads LastActiveTime using the official aligned 16-byte payload (int32 + pad + int64)', () => {
+    const payload = Buffer.alloc(16);
+    payload.writeInt32LE(7, 0);
+    payload.writeBigInt64LE(123456789n, 8);
+    const buf = b.snss([
+      b.tabWindow(1, 7),
+      b.nav(7, 0, 'https://active.example/', 'a'),
+      b.selectedNav(7, 0),
+      b.cmd(SESSION_CMD.LastActiveTime, payload),
+      b.selectedTab(1, 0),
+    ]);
+    const parsed = parseSession(buf);
+    assert.equal(parsed.windows[0].tabs[0].lastActive, 123456789);
+  });
+});
+
+
+describe('navigation boundaries and prune ordering', () => {
+  it('rejects pickle declarations beyond actual command payload', () => {
+    const raw = b.pickle(1, 0, 'https://bad.example/', {s16:'bad'});
+    raw.writeUInt32LE(raw.length + 100, 0);
+    assert.throws(() => new PickleReader(raw), /pickle/);
+  });
+  it('flags a one-byte trailing command header as truncated', () => {
+    assert.equal(readCommands(Buffer.concat([b.snss([]), Buffer.from([1])])).truncated, true);
+  });
+  it('adjusts selected navigation when earlier entries are pruned', () => {
+    const raw = b.snss([
+      b.tabWindow(1,1), b.nav(1,0,'https://a.example/','a'),
+      b.nav(1,1,'https://b.example/','b'), b.nav(1,2,'https://c.example/','c'),
+      b.selectedNav(1,1), b.pruned(1,0,1),
+    ]);
+    assert.equal(parseSession(raw).windows[0].tabs[0].url,'https://b.example/');
+  });
+  it('does not resurrect a closed window from a later selected-tab command', () => {
+    const raw=b.snss([b.tabWindow(1,1),b.nav(1,0,'https://closed.example/','c'),b.windowClosed(1),b.selectedTab(1,0)]);
+    assert.equal(parseSession(raw).windows.length,0);
+  });
+});

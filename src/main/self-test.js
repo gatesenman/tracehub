@@ -447,6 +447,53 @@ async function runSelfTest(ctx) {
     };
   }));
 
+  checks.push(check('session-file-synthetic-preview-save', 'isolated-synthetic-files-not-real-chrome', async () => {
+    const sessionFile = require('./session-file-service');
+    const snapMod = require('./snapshot-store');
+    const core = require('../shared/snapshot-core');
+    const { sampleTwoWindows } = require('../shared/snss-sample');
+    const root = path.join(userData, 'synthetic-chrome');
+    const prof = path.join(root, 'Default', 'Sessions');
+    fs.mkdirSync(prof, { recursive: true });
+    const sessionPath = path.join(prof, 'Session_1');
+    fs.writeFileSync(sessionPath, sampleTwoWindows());
+    const roots = [{ id: 'chrome', name: 'Google Chrome', base: root }];
+    snapMod.migrateSnapshotTables(store.db);
+    sessionFile.setSessionFileRuntime({
+      roots,
+      spawnFn: async () => ({ ok: true }),
+      resolveExeFn: () => '/usr/bin/google-chrome',
+    });
+    try {
+      const list = sessionFile.listProfilesPublic({ roots });
+      const rec = list.find((p) => p.key === 'chrome::Default');
+      if (!rec) return { ok: false, error: 'synthetic profile not listed', list };
+      const preview = sessionFile.previewByKey('chrome::Default', { roots });
+      if (!preview.ok || !preview.tabCount) return { ok: false, error: preview.error || 'preview failed', preview: { ok: preview.ok, tabCount: preview.tabCount } };
+      const saved = sessionFile.savePreview({ previewId: preview.previewId, confirmed: true }, { store, roots });
+      if (!saved.ok) return { ok: false, error: saved.error || 'save failed' };
+      if (saved.snapshot.source !== 'session-file') return { ok: false, error: 'source was not session-file' };
+      if (saved.snapshot.windows[0].tabs.some((t) => t.tabId != null)) return { ok: false, error: 'tabId leaked' };
+      const gate = core.assertCloseable(saved.snapshot, { userConfirmed: true, ackUnsavedRisk: true });
+      if (gate.ok) return { ok: false, error: 'close was allowed for session-file snapshot' };
+      const restored = await sessionFile.restoreSessionFileSnapshot(saved.snapshot, {
+        store,
+        resolveExeFn: () => '/usr/bin/google-chrome',
+        spawnFn: async () => ({ ok: true }),
+      });
+      if (!restored.ok || restored.via !== 'session-file-window-reopen') {
+        return { ok: false, error: restored.error || 'restore failed', via: restored.via };
+      }
+      return {
+        ok: true,
+        tabCount: saved.snapshot.tabCount,
+        detail: 'synthetic SNSS under isolated userData; not a real Chrome/Edge profile',
+      };
+    } finally {
+      sessionFile.clearSessionFileRuntime();
+    }
+  }));
+
   const results = [];
   for (const entry of checks) {
     results.push(await runCheck(entry));

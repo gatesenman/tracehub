@@ -32,6 +32,8 @@ function memoryIO(files, { now = Date.now() } = {}) {
   };
 
   return {
+    realpath: (p) => path.resolve(p),
+    lstat: (p) => ({ isSymbolicLink: () => false }),
     exists: (p) => !!lookup(p) || hasPrefix(p),
     readFile: (p) => {
       reads.push(p);
@@ -54,9 +56,16 @@ function memoryIO(files, { now = Date.now() } = {}) {
     },
     stat: (p) => {
       const f = lookup(p);
-      if (f) return { mtimeMs: f.mtime, mtime: new Date(f.mtime), size: f.size };
-      if (hasPrefix(p)) return { mtimeMs: now, mtime: new Date(now), size: 0 };
+      if (f) return { mtimeMs: f.mtime, mtime: new Date(f.mtime), size: f.size, isDirectory: () => hasPrefix(p) && !f };
+      if (hasPrefix(p)) return { mtimeMs: now, mtime: new Date(now), size: 0, isDirectory: () => true };
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    },
+    isDirectory: (p) => {
+      const prefix = p.endsWith('/') ? p : p + '/';
+      for (const k of [...store.keys(), ...written.keys()]) {
+        if (k.startsWith(prefix)) return true;
+      }
+      return false;
     },
     mkdir: () => {},
     rm: (p) => { written.delete(p); },

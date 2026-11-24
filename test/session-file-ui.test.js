@@ -56,3 +56,21 @@ describe('renderer wires the session-file entry', () => {
     assert.match(js, /session-file-window-reopen/);
   });
 });
+
+  it('uses a warning tone for stale, last-session, racy or truncated previews and honest empty-profile copy', () => {
+    assert.equal(ui.previewHonestyTone({ lastSession: true }), 'warn');
+    assert.equal(ui.previewHonestyTone({ racy: true }), 'warn');
+    assert.equal(ui.previewHonestyTone({ truncated: true }), 'warn');
+    assert.equal(ui.previewHonestyTone({ stale: true }), 'warn');
+    assert.equal(ui.previewHonestyTone({}), 'muted');
+    const none = ui.profileListStatus([], 'scope');
+    assert.equal(none.canPreview, false);
+    assert.match(none.text, /没有发现 Chrome \/ Edge 配置目录/);
+    const empty = ui.profileListStatus([{ key: 'chrome::Default', hasSessionFiles: false }]);
+    assert.equal(empty.canPreview, false);
+    assert.match(empty.text, /没有可读取的会话文件/);
+    assert.equal(empty.tone, 'warn');
+    const ok = ui.profileListStatus([{ key: 'chrome::Default', hasSessionFiles: true }], '请选择配置');
+    assert.equal(ok.canPreview, true);
+    assert.equal(ok.text, '请选择配置');
+  });

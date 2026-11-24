@@ -121,7 +121,7 @@ function saveSnapshot(store, raw, extras = {}) {
         id, createdAt, normalized.title, normalized.source,
         normalized.browserId, normalized.browserName, normalized.profile,
         normalized.tabCount, JSON.stringify(rawJson),
-        extras.extensionId || normalized.extensionId || '',
+        normalized.source === 'extension' ? (extras.extensionId || normalized.extensionId || '') : '',
         extras.audienceBrowser || normalized.browserId || '',
         origin && origin.locked ? 1 : 0,
         origin && origin.stale ? 1 : 0,

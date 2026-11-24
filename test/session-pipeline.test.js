@@ -82,6 +82,22 @@ describe('session-file preview-save-reopen-close chain', () => {
     if (dir) fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('saves only the confirmed preview when source changes before save; ignores forged renderer payload', async () => {
+    const preview = await ipc.invoke('sessionfile:preview', {key:'chrome::Default'});
+    assert.equal(preview.ok, true);
+    // Replace the reader with an empty synthetic profile after preview.
+    sessionFile.setSessionFileRuntime({io: memoryIO({})});
+    const saved = await ipc.invoke('sessionfile:save', {
+      previewId:preview.previewId, confirmed:true,
+      payload:{source:'extension',windows:[{tabs:[{tabId:123,url:'https://forged.example/'}]}]},
+    });
+    assert.equal(saved.ok, true);
+    assert.equal(saved.snapshot.tabCount, preview.tabCount);
+    assert.equal(saved.snapshot.source,'session-file');
+    assert.ok(!JSON.stringify(saved.snapshot).includes('forged.example'));
+    assert.ok(saved.snapshot.windows.every(w=>w.tabs.every(t=>t.tabId==null)));
+  });
+
   it('lists, previews, saves origin, reopens by window via stub, and refuses close even with forged tab ids', async () => {
     const listed = await ipc.invoke('sessionfile:list-profiles');
     assert.equal(listed.ok, true);

@@ -69,12 +69,14 @@ function previewByKey(key, opts = {}) {
   if (!rec) {
     return { ok: false, error: '未找到这个 Chrome / Edge 配置，或其中没有会话文件。', windows: [], tabCount: 0 };
   }
+  const roots = resolveRoots(opts);
   const result = previewProfile({
     browserId: rec.browserId,
     browserName: rec.browserName,
     profile: rec.profile,
     profileDir: rec._profileDir,
     io: opts.io || runtime.io || defaultIO(),
+    roots,
   });
   if (!result.ok) return result;
   forgetExpired();
@@ -89,15 +91,11 @@ function savePreview({ previewId, confirmed }, opts = {}) {
   forgetExpired();
   const held = previews.get(previewId);
   if (!held) return { ok: false, error: '预览已过期，请重新选择配置并预览。' };
-  // Re-read so we do not blindly persist a stale renderer-edited payload.
-  const again = previewProfile({
-    browserId: held.rec.browserId,
-    browserName: held.rec.browserName,
-    profile: held.rec.profile,
-    profileDir: held.rec._profileDir,
-    io: opts.io || runtime.io || defaultIO(),
-  });
-  if (!again.ok) return again;
+  // Persist the exact main-process-held preview the user confirmed, not a
+  // re-read that may contain newly opened, never-previewed pages. Renderer
+  // payload fields are never trusted; only the opaque previewId is used.
+  const again = held.result;
+  if (!again || !again.ok) return { ok: false, error: '预览不可用，请重新预览。' };
   const store = opts.store;
   if (!store) return { ok: false, error: '内部错误：没有可用的存储' };
   const saved = snap.saveSnapshot(store, again.payload, {
@@ -156,12 +154,35 @@ function exportableSnapshot(s) {
   };
 }
 
+function sessionFileRestorePlan(s) {
+  if (!s || s.source !== 'session-file') {
+    return { ok: false, error: '这份快照不是会话文件快照，不能走按窗口重新打开的路径。' };
+  }
+  const plan = reopen.planWindowReopen(s);
+  return {
+    ok: true,
+    via: 'session-file-window-reopen',
+    plan,
+    limitation: plan.limitation,
+    snapshotTitle: s.title,
+  };
+}
+
 async function restoreSessionFileSnapshot(s, opts = {}) {
   if (!s || s.source !== 'session-file') {
     return { ok: false, via: 'none', error: '这份快照不是会话文件快照，不能走按窗口重新打开的路径。' };
   }
   const plan = reopen.planWindowReopen(s);
   if (!plan.urlCount) return { ok: false, via: 'session-file-window-reopen', error: '没有可按窗口打开的 http(s) 网址', plan };
+  if (plan.needsSecondConfirm && !opts.largeConfirmed) {
+    return {
+      ok: false,
+      via: 'session-file-window-reopen',
+      needsSecondConfirm: true,
+      error: plan.secondConfirmText || '页签数量较多，需要再次确认后才会打开。',
+      plan,
+    };
+  }
   const browserId = s.browserId === 'edge' ? 'edge' : 'chrome';
   const exe = (opts.resolveExeFn || runtime.resolveExeFn || resolveExecutable)(browserId, opts.resolveExeOpts || runtime.resolveExeOpts || {});
   const built = reopen.buildSessionReopenLaunches({
@@ -183,19 +204,11 @@ async function restoreSessionFileSnapshot(s, opts = {}) {
     }
   }));
   const result = await reopen.runSessionReopenLaunches(built, spawnFn);
-  if (opts.store && result.ok) {
-    for (const w of plan.windows) {
-      for (const id of w.tabRowIds || []) {
-        snap.updateTabMeta(opts.store, id, { restoreStatus: 'opened', restoreError: '' });
-      }
-    }
-  } else if (opts.store && !result.ok) {
-    for (const w of plan.windows) {
-      for (const id of w.tabRowIds || []) {
-        snap.updateTabMeta(opts.store, id, { restoreStatus: 'failed', restoreError: result.error || result.message || '打开失败' });
-      }
-    }
+  if (opts.store) {
+    for (const id of result.openedTabRowIds || []) snap.updateTabMeta(opts.store,id,{restoreStatus:'opened',restoreError:''});
+    for (const id of result.failedTabRowIds || []) snap.updateTabMeta(opts.store,id,{restoreStatus:'failed',restoreError:result.error || '启动失败'});
   }
+  if (plan.skipped) result.message = (result.message || '') + ` 已跳过 ${plan.skipped} 个网址（数量上限 ${plan.skippedLimit}，不安全或不支持 ${plan.skippedNonHttp}）。`;
   return { ...result, plan, snapshot: opts.store ? snap.getSnapshot(opts.store, s.id) : s };
 }
 
@@ -229,6 +242,7 @@ module.exports = {
   previewByKey,
   savePreview,
   exportableSnapshot,
+  sessionFileRestorePlan,
   restoreSessionFileSnapshot,
   registerSessionFileIpc,
   setSessionFileRuntime,

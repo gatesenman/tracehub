@@ -16,6 +16,10 @@ const {
   filterHttpTabs,
   redactOrigin,
   honestyNote,
+  isPathInside,
+  joinUnder,
+  safeDiskChild,
+  getLastCopyInfo,
 } = require('./session-files');
 
 const SUPPORTED = [
@@ -66,7 +70,11 @@ function listChromiumProfiles({ roots, io } = {}) {
     for (const entry of names) {
       const name = typeof entry === 'string' ? entry : (entry && entry.name) || '';
       if (!isProfileDirName(name)) continue;
-      const profileDir = path.join(root.base, name);
+      const profileDir = joinUnder(root.base, name);
+      if (!profileDir || !safeDiskChild(root.base, profileDir, fsio)) continue;
+      if (typeof fsio.isDirectory === 'function') {
+        try { if (!fsio.isDirectory(profileDir)) continue; } catch (e) { continue; }
+      }
       const files = listSessionFiles(profileDir, fsio);
       out.push({
         key: profileKey(root.id, name),
@@ -96,8 +104,11 @@ function publicProfileList(list) {
 
 function readProfileSession(profileDir, io = defaultIO()) {
   const files = listSessionFiles(profileDir, io);
-  return pickChromiumSession(files, (f) => {
+  let racy = false;
+  const picked = pickChromiumSession(files, (f) => {
     const copied = copyLocked(f.path, f.kind, io);
+    const info = getLastCopyInfo();
+    if (info && info.racy) racy = true;
     if (!copied) return null;
     try {
       if (Buffer.isBuffer(copied)) return copied;
@@ -109,6 +120,8 @@ function readProfileSession(profileDir, io = defaultIO()) {
       return null;
     }
   });
+  if (racy) picked.racy = true;
+  return picked;
 }
 
 function windowsToPayload(parsedWindows) {
@@ -156,13 +169,35 @@ function failPreview(error, extra = {}) {
  * Preview a profile's session files. Empty or locked-with-no-fallback is a
  * failure, never a successful 0-tab snapshot.
  */
-function previewProfile({ browserId, browserName, profile, profileDir, io } = {}) {
+function assertSafePreviewLocation({ profile, profileDir, roots }) {
+  if (!profileDir) return '未指定配置目录';
+  const base = path.basename(path.resolve(String(profileDir)));
+  const expected = profile || base;
+  if (!isProfileDirName(expected) || (profile && !isProfileDirName(profile))) {
+    return '拒绝不安全的配置目录（名称不在允许列表中）';
+  }
+  if (profile && base !== profile) {
+    return '拒绝不安全的配置目录（路径与配置名不一致，可能发生路径逃逸）';
+  }
+  if (Array.isArray(roots) && roots.length) {
+    const ok = roots.some((root) => root && root.base && isPathInside(root.base, profileDir));
+    if (!ok) return '拒绝逃逸出浏览器用户数据目录的配置路径';
+  }
+  return null;
+}
+
+function previewProfile({ browserId, browserName, profile, profileDir, io, roots } = {}) {
   const supported = SUPPORTED.find((s) => s.id === browserId);
   if (!supported) {
     return failPreview('本轮只支持从 Chrome 或 Edge 的会话文件读取，Firefox 和其他浏览器不在范围内。');
   }
   if (!profileDir) return failPreview('未指定配置目录');
+  const locationError = assertSafePreviewLocation({ profile, profileDir, roots });
+  if (locationError) return failPreview(locationError);
   const fsio = io || defaultIO();
+  if (Array.isArray(roots) && !roots.some(root => root.id === browserId && safeDiskChild(root.base, profileDir, fsio))) {
+    return failPreview('配置路径校验失败：拒绝链接、越界或不可验证的配置目录');
+  }
   const raw = readProfileSession(profileDir, fsio);
   const origin = redactOrigin(raw);
   const name = browserName || supported.name;
@@ -218,6 +253,7 @@ module.exports = {
   profileKey,
   isProfileDirName,
   previewProfile,
+  assertSafePreviewLocation,
   windowsToPayload,
   readProfileSession,
 };
