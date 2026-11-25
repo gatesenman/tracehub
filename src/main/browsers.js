@@ -137,8 +137,10 @@ function detectBrowsers() {
 function copyToTemp(historyPath, tag) {
   const tmp = path.join(os.tmpdir(), `bhh-${tag}-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
   fs.copyFileSync(historyPath, tmp);
-  // Firefox uses WAL; copy the -wal file too if present so recent visits show.
-  for (const suffix of ['-wal', '-shm']) {
+  // Firefox uses WAL (-wal/-shm); Chromium uses a rollback journal
+  // (History-journal). Copy whichever side files exist so recent visits show
+  // and an in-flight write can be rolled back on the copy (see sqlengine).
+  for (const suffix of ['-wal', '-shm', '-journal']) {
     const extra = historyPath + suffix;
     if (fs.existsSync(extra)) {
       try { fs.copyFileSync(extra, tmp + suffix); } catch (e) { /* ignore */ }
@@ -148,7 +150,7 @@ function copyToTemp(historyPath, tag) {
 }
 
 function cleanupTemp(tmp) {
-  for (const suffix of ['', '-wal', '-shm']) {
+  for (const suffix of ['', '-wal', '-shm', '-journal']) {
     try { fs.unlinkSync(tmp + suffix); } catch (e) { /* ignore */ }
   }
 }
@@ -224,6 +226,89 @@ async function readProfileHistory(browser, profile, sinceMs = 0) {
     cleanupTemp(tmp);
   }
   return items;
+}
+
+// ---------------------------------------------------------------------------
+// Cursor-based (gap-filling) reads used by the sync engine.
+//
+// A cursor is { visitId, visitTime } taken from the browser's own visits
+// table (Chromium `visits.id`, Firefox `moz_historyvisits.id`; visitTime in
+// JS ms). A visit is new when its id is above the cursor id OR its time is
+// above the cursor time: the id catches visits written while TraceHub was
+// closed even if they carry older timestamps (e.g. Chrome Sync from another
+// device), the time catches ids reused after the browser deleted its newest
+// rows. Rows are returned oldest-id first, at most `limit` per call, with
+// `hasMore` so the caller can keep paging without skipping anything. With
+// visitId == null only the time bound applies (first run / upgrade).
+// ---------------------------------------------------------------------------
+const VISIT_PAGE_LIMIT = 20000;
+
+function visitsQuery(engine, hasId, limit) {
+  const idCond = hasId ? 'v.id > ? OR ' : '';
+  if (engine === 'firefox') {
+    return `SELECT v.id AS vid, p.url AS url, p.title AS title, v.visit_date AS t,
+                   fp.url AS from_url
+              FROM moz_historyvisits v
+              JOIN moz_places p ON p.id = v.place_id
+              LEFT JOIN moz_historyvisits fv ON fv.id = v.from_visit
+              LEFT JOIN moz_places fp ON fp.id = fv.place_id
+             WHERE ${idCond}v.visit_date > ?
+             ORDER BY v.id ASC
+             LIMIT ${limit + 1}`;
+  }
+  return `SELECT v.id AS vid, u.url AS url, u.title AS title, v.visit_time AS t,
+                 fu.url AS from_url
+            FROM visits v
+            JOIN urls u ON u.id = v.url
+            LEFT JOIN visits fv ON fv.id = v.from_visit
+            LEFT JOIN urls fu ON fu.id = fv.url
+           WHERE ${idCond}v.visit_time > ?
+           ORDER BY v.id ASC
+           LIMIT ${limit + 1}`;
+}
+
+async function readProfileVisits(browser, profile, cursor = {}, { limit = VISIT_PAGE_LIMIT } = {}) {
+  const firefox = browser.engine === 'firefox';
+  const hasId = cursor && cursor.visitId != null && Number.isFinite(Number(cursor.visitId));
+  const sinceMs = Math.max(0, Number((cursor && cursor.visitTime) || 0));
+  const toSource = (ms) => (firefox ? ms * 1000 : (ms + CHROME_EPOCH_OFFSET_MS) * 1000);
+  const sinceSource = sinceMs > 0 ? toSource(sinceMs) : 0;
+  const params = hasId ? [Number(cursor.visitId), sinceSource] : [sinceSource];
+
+  const tag = `${browser.id}-${profile.profile}`.replace(/[^\w]+/g, '_');
+  const tmp = copyToTemp(profile.historyPath, tag);
+  const items = [];
+  let next = { visitId: hasId ? Number(cursor.visitId) : 0, visitTime: sinceMs };
+  let hasMore = false;
+  try {
+    const db = await openDatabaseFromFile(tmp);
+    try {
+      const rows = queryAll(db, visitsQuery(browser.engine, hasId, limit), params);
+      hasMore = rows.length > limit;
+      for (const r of rows.slice(0, limit)) {
+        const visitTime = firefox ? firefoxTimeToMs(r.t) : chromeTimeToMs(r.t);
+        const vid = Number(r.vid);
+        if (vid > next.visitId) next.visitId = vid;
+        if (visitTime > next.visitTime) next.visitTime = visitTime;
+        items.push({
+          url: r.url,
+          title: r.title || r.url,
+          visitTime,
+          browser: browser.id,
+          browserName: browser.name,
+          profile: profile.profile,
+          fromUrl: r.from_url && r.from_url !== r.url ? r.from_url : null,
+        });
+      }
+      db.close();
+    } catch (e) {
+      db.close();
+      throw e;
+    }
+  } finally {
+    cleanupTemp(tmp);
+  }
+  return { items, cursor: next, hasMore };
 }
 
 // Read history from all detected browsers/profiles since a timestamp.
@@ -332,6 +417,7 @@ async function readAllBookmarks(browsers = null) {
 module.exports = {
   detectBrowsers,
   readProfileHistory,
+  readProfileVisits,
   readAllHistory,
   readAllBookmarks,
   chromeTimeToMs,

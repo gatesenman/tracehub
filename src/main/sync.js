@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Worker } = require('worker_threads');
-const { detectBrowsers, readProfileHistory } = require('./browsers');
+const { detectBrowsers, readProfileVisits } = require('./browsers');
 const { resolveHistoryWorkerPath } = require('./paths');
 
 // Continuously pulls new visits from all browsers into the unified store.
@@ -11,9 +11,12 @@ const { resolveHistoryWorkerPath } = require('./paths');
 // periodic poll fallback (browser history DBs are file-locked & written in
 // bursts, so watch + debounce + poll is the robust approach).
 class SyncEngine {
-  constructor(store, { intervalMs = 10000, onUpdate = () => {}, getBlacklist = () => [], getPausedRanges = () => [], getEnabledProfiles = () => null, isSyncAllowed = () => true } = {}) {
+  constructor(store, { backfillOverlapMs = 7 * 86400000, maxPagesPerSync = 50, readOptions = {}, intervalMs = 10000, onUpdate = () => {}, getBlacklist = () => [], getPausedRanges = () => [], getEnabledProfiles = () => null, isSyncAllowed = () => true } = {}) {
     this.store = store;
     this.intervalMs = intervalMs;
+    this.backfillOverlapMs = backfillOverlapMs;
+    this.maxPagesPerSync = maxPagesPerSync;
+    this.readOptions = readOptions;
     this.onUpdate = onUpdate;
     this.getBlacklist = getBlacklist;
     this.getPausedRanges = getPausedRanges;
@@ -37,8 +40,9 @@ class SyncEngine {
   // UI/main process never stalls. If the worker cannot start or dies (e.g. a
   // packaging mistake makes its require() fail), fall back to in-process
   // reading for good instead of failing every profile silently.
-  _readHistory(browser, profile, since) {
-    if (this._workerBroken) return readProfileHistory(browser, profile, since);
+  // Resolves to { items, cursor, hasMore } (see browsers.readProfileVisits).
+  _readVisits(browser, profile, cursor) {
+    if (this._workerBroken) return readProfileVisits(browser, profile, cursor, this.readOptions);
     if (!this._worker) {
       try {
         this._worker = this._createWorker();
@@ -47,7 +51,7 @@ class SyncEngine {
           if (!job) return;
           this._workerJobs.delete(msg.id);
           if (msg.error) job.reject(new Error(msg.error));
-          else job.resolve(msg.items);
+          else job.resolve(msg.page);
         });
         this._worker.on('error', (err) => this._onWorkerFailure(err));
         this._worker.on('exit', (code) => {
@@ -56,15 +60,16 @@ class SyncEngine {
         if (typeof this._worker.unref === 'function') this._worker.unref();
       } catch (e) {
         this._onWorkerFailure(e);
-        return readProfileHistory(browser, profile, since);
+        return readProfileVisits(browser, profile, cursor, this.readOptions);
       }
     }
     const id = ++this._workerSeq;
     return new Promise((resolve, reject) => {
-      this._workerJobs.set(id, { resolve, reject, browser, profile, since });
+      this._workerJobs.set(id, { resolve, reject, browser, profile, cursor });
       this._worker.postMessage({
         id,
-        since,
+        cursor,
+        options: this.readOptions,
         browser: { id: browser.id, name: browser.name, engine: browser.engine },
         profile: { profile: profile.profile, historyPath: profile.historyPath },
       });
@@ -89,7 +94,7 @@ class SyncEngine {
     if (w) { try { w.terminate(); } catch (e) { /* ignore */ } }
     for (const job of jobs) {
       Promise.resolve()
-        .then(() => readProfileHistory(job.browser, job.profile, job.since))
+        .then(() => readProfileVisits(job.browser, job.profile, job.cursor, this.readOptions))
         .then(job.resolve, job.reject);
     }
   }
@@ -181,6 +186,55 @@ class SyncEngine {
     return list.some((x) => x.browserId === browserId && x.profile === profileName);
   }
 
+  // Drop blacklisted domains and visits inside privacy-pause windows, even if
+  // they only get synced much later.
+  _filterItems(items) {
+    const blacklist = (this.getBlacklist() || []).map((d) => String(d).toLowerCase());
+    if (blacklist.length) {
+      items = items.filter((it) => {
+        try {
+          const host = new URL(it.url).hostname.toLowerCase();
+          return !blacklist.some((d) => host === d || host.endsWith('.' + d));
+        } catch (e) {
+          return true;
+        }
+      });
+    }
+    const pauses = this.getPausedRanges() || [];
+    if (pauses.length) {
+      items = items.filter(
+        (it) => !pauses.some((p) => it.visitTime >= p.from && it.visitTime < p.to)
+      );
+    }
+    return items;
+  }
+
+  // Import every visit the browser recorded since this profile's cursor,
+  // including visits made while TraceHub was not running. The cursor lives in
+  // the store and only advances after the page has been written, so a crash
+  // re-reads (and dedupes) instead of skipping. Without a cursor (first run,
+  // or upgrading from <=1.2.8 which kept none) start a little before the
+  // newest stored visit, or from the beginning of the browser's history.
+  async _syncProfile(browser, profile) {
+    let cursor = this.store.getSyncCursor
+      ? this.store.getSyncCursor(browser.id, profile.profile)
+      : null;
+    if (!cursor) {
+      const latest = this.store.latestVisitTime(browser.id, profile.profile);
+      cursor = { visitId: null, visitTime: latest > 0 ? Math.max(0, latest - this.backfillOverlapMs) : 0 };
+    }
+    let inserted = 0;
+    for (let page = 0; page < this.maxPagesPerSync; page++) {
+      const res = await this._readVisits(browser, profile, cursor);
+      inserted += this.store.upsertVisits(this._filterItems(res.items || []));
+      cursor = res.cursor;
+      if (this.store.setSyncCursor) this.store.setSyncCursor(browser.id, profile.profile, cursor);
+      if (!res.hasMore) break;
+    }
+    return inserted;
+  }
+
+  // full is kept for callers; every sync now backfills from the cursor.
   async syncOnce(full) {
     if (this._syncing || !this.running) return { inserted: 0 };
     if (this.isSyncAllowed && !this.isSyncAllowed()) return { inserted: 0, skipped: 'onboarding' };
@@ -191,29 +245,8 @@ class SyncEngine {
       for (const browser of this.browsers) {
         for (const profile of browser.profiles) {
           if (!this._profileAllowed(browser.id, profile.profile)) continue;
-          const since = full ? 0 : this.store.latestVisitTime(browser.id, profile.profile);
           try {
-            let items = await this._readHistory(browser, profile, since);
-            const blacklist = (this.getBlacklist() || []).map((d) => String(d).toLowerCase());
-            if (blacklist.length) {
-              items = items.filter((it) => {
-                try {
-                  const host = new URL(it.url).hostname.toLowerCase();
-                  return !blacklist.some((d) => host === d || host.endsWith('.' + d));
-                } catch (e) {
-                  return true;
-                }
-              });
-            }
-            // Privacy pause: drop visits whose time falls inside any paused
-            // window, even if they only get synced in much later.
-            const pauses = this.getPausedRanges() || [];
-            if (pauses.length) {
-              items = items.filter(
-                (it) => !pauses.some((p) => it.visitTime >= p.from && it.visitTime < p.to)
-              );
-            }
-            inserted += this.store.upsertVisits(items);
+            inserted += await this._syncProfile(browser, profile);
           } catch (e) {
             errors.push({ browser: browser.id, profile: profile.profile, error: String(e.message || e) });
           }
