@@ -2,7 +2,7 @@
 
 本机桌面应用（Electron）。把多款浏览器的**浏览历史**汇到一处，并在关机前把**真实已打开的页签**保存成可整理、可分批恢复的快照。
 
-当前版本 **1.2.8**（加固测试版，待实机验收；1.2.0 / 1.2.1 源码目录与旧产物另行保留，不要把旧安装包当本版使用）。统一名称是「拾迹 TraceHub」（不再使用 Browser History Hub 作为对外名称）。
+当前版本 **1.2.9**（修复安装版无法采集浏览器历史，并支持补采未开软件期间的历史；1.2.0 / 1.2.1 源码目录与旧产物另行保留，不要把旧安装包当本版使用）。统一名称是「拾迹 TraceHub」（不再使用 Browser History Hub 作为对外名称）。
 
 ## 它能做什么
 
@@ -68,7 +68,7 @@ API Key 只保存在本机 `config.json`。页签快照的配对令牌也只用�
 ```bash
 npm ci
 npm run rebuild
-npm run pack:win   # 产出 TraceHub-1.2.8-setup.exe 与 TraceHub-1.2.8-portable.exe
+npm run pack:win   # 产出 TraceHub-1.2.9-setup.exe 与 TraceHub-1.2.9-portable.exe
 ```
 
 `package.json` 目前只配置了 Windows 目标（NSIS 安装包 + portable）。macOS / Linux 可以用 `npm start` 跑源码，**不代表已提供或验证过这些平台的安装包**。在 Linux 上交叉打包时，`afterPack` 会把官方 win32-x64 Electron 31 预编译 `better-sqlite3` 换进产物；这只能证明产物文件格式完整，**不能**代替 Windows 真机运行验证。

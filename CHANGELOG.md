@@ -1,6 +1,6 @@
 # 更新日志
 
-## 未发布 — 修复浏览器历史采集 + 补采未开软件期间的历史
+## 1.2.9 — 2026-11-26 修复浏览器历史采集 + 补采未开软件期间的历史
 
 - **修复（根因）**：1.2.1 起打包配置把 `src/main/history-worker.js` 单独解包到 `app.asar.unpacked`，但它要 `require('./browsers')`，解包目录里没有这个文件，安装版每次读取浏览器历史都报 “Cannot find module './browsers'”，而且错误被吞掉，界面只表现为“今日 0 次访问”。现在 worker 留在 `app.asar` 里与依赖模块同目录（Electron 的 worker 可直接从 asar 加载）。
 - worker 无法启动或崩溃时自动改为主进程内读取，并记录原因，不再静默丢掉所有浏览器。
