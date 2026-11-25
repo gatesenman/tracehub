@@ -126,11 +126,74 @@ function applyWal(dbBuf, walBuf) {
   return merged;
 }
 
+// Roll back a hot SQLite rollback journal (Chromium's History-journal) into
+// a copied main-file image. A non-empty journal with a valid header means a
+// write transaction was in flight when we copied: the main file may hold
+// half-written pages, and the journal holds the ORIGINAL pages. Restoring
+// them is exactly what SQLite itself does when it opens a hot journal, and
+// yields the last committed state. Records with a bad checksum (torn tail)
+// stop the replay, as in SQLite. Returns dbBuf unchanged if not hot.
+const JOURNAL_MAGIC = [0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7];
+
+function isHotJournal(journalBuf) {
+  if (!journalBuf || journalBuf.length < 28) return false;
+  for (let i = 0; i < 8; i++) if (journalBuf[i] !== JOURNAL_MAGIC[i]) return false;
+  return true;
+}
+
+function applyRollbackJournal(dbBuf, journalBuf) {
+  if (!isHotJournal(journalBuf)) return dbBuf;
+  const j = new DataView(journalBuf.buffer, journalBuf.byteOffset, journalBuf.byteLength);
+  const origPages = j.getUint32(16);
+  const sectorSize = j.getUint32(20) || 512;
+  const pageSize = j.getUint32(24);
+  if (!pageSize || (pageSize & (pageSize - 1)) !== 0 || pageSize > 65536) return dbBuf;
+  if (!sectorSize || (sectorSize & (sectorSize - 1)) !== 0 || sectorSize > 65536) return dbBuf;
+  const recSize = 4 + pageSize + 4;
+  const out = new Uint8Array(Math.max(dbBuf.length, origPages * pageSize));
+  out.set(dbBuf);
+  const restored = new Set();
+  // A journal is one or more segments, each a sector-sized header followed
+  // by nRec page records; every sync of the journal starts a new segment.
+  let hdr = 0;
+  segments: while (hdr + 28 <= journalBuf.length && isHotJournal(journalBuf.subarray(hdr))) {
+    let nRec = j.getUint32(hdr + 8);
+    const cksumInit = j.getUint32(hdr + 12);
+    const first = hdr + sectorSize;
+    const maxRec = Math.max(0, Math.floor((journalBuf.length - first) / recSize));
+    if (nRec === 0xffffffff || nRec > maxRec) nRec = maxRec;
+    if (nRec === 0 && first + recSize <= journalBuf.length) nRec = maxRec; // unsynced tail
+    for (let r = 0; r < nRec; r++) {
+      const off = first + r * recSize;
+      const pgno = j.getUint32(off);
+      const data = journalBuf.subarray(off + 4, off + 4 + pageSize);
+      let cksum = cksumInit;
+      for (let i = pageSize - 200; i > 0; i -= 200) cksum = (cksum + data[i]) >>> 0;
+      if (cksum !== j.getUint32(off + 4 + pageSize)) break segments; // torn record
+      if (!pgno || pgno > origPages || restored.has(pgno)) continue;
+      restored.add(pgno);
+      out.set(data, (pgno - 1) * pageSize);
+    }
+    if (!nRec) break;
+    const endOfRecords = first + nRec * recSize;
+    hdr = Math.ceil(endOfRecords / sectorSize) * sectorSize;
+  }
+  return origPages ? out.subarray(0, origPages * pageSize) : out;
+}
+
 // Open a SQLite database from a file buffer (read-only usage). If a matching
 // -wal file exists next to it, committed WAL frames are merged in first.
 async function openDatabaseFromFile(filePath) {
   const sql = await getSQL();
   let buffer = new Uint8Array(fs.readFileSync(filePath));
+  const journalPath = filePath + '-journal';
+  if (fs.existsSync(journalPath)) {
+    try {
+      buffer = applyRollbackJournal(buffer, new Uint8Array(fs.readFileSync(journalPath)));
+    } catch (e) {
+      /* fall back to the main file image */
+    }
+  }
   const walPath = filePath + '-wal';
   if (fs.existsSync(walPath)) {
     try {
@@ -177,4 +240,6 @@ module.exports = {
   persist,
   queryAll,
   applyWal,
+  applyRollbackJournal,
+  isHotJournal,
 };
