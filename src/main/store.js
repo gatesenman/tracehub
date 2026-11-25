@@ -149,6 +149,30 @@ class Store {
     this._scheduleSave();
   }
 
+  // Per browser+profile sync cursor ({ visitId, visitTime }) into the
+  // browser's own history DB; see SyncEngine._syncProfile.
+  getSyncCursor(browser, profile) {
+    const raw = this.getMeta(syncCursorKey(browser, profile));
+    if (!raw) return null;
+    try {
+      const c = JSON.parse(raw);
+      if (!c || typeof c !== 'object') return null;
+      return {
+        visitId: c.visitId == null ? null : Number(c.visitId),
+        visitTime: Number(c.visitTime) || 0,
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  setSyncCursor(browser, profile, cursor) {
+    this.setMeta(syncCursorKey(browser, profile), JSON.stringify({
+      visitId: cursor && cursor.visitId != null ? Number(cursor.visitId) : null,
+      visitTime: Number(cursor && cursor.visitTime) || 0,
+    }));
+  }
+
   // Insert a batch of visits, ignoring duplicates. Returns number inserted.
   upsertVisits(items) {
     if (!items || items.length === 0) return 0;
@@ -1252,6 +1276,10 @@ function domainOf(url) {
   } catch (e) {
     return '';
   }
+}
+
+function syncCursorKey(browser, profile) {
+  return `syncCursor:${JSON.stringify([String(browser || ''), String(profile || '')])}`;
 }
 
 // Local-time day key YYYY-MM-DD.

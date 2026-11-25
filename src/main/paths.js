@@ -1,16 +1,18 @@
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 
-/** History worker must be loaded from asar.unpacked in a packaged build. */
+/**
+ * Path of the history worker script.
+ *
+ * The worker must stay INSIDE app.asar next to browsers.js / sqlengine.js:
+ * it `require('./browsers')`, and a copy extracted to app.asar.unpacked has
+ * no siblings there, so every read failed with "Cannot find module
+ * './browsers'" (1.2.1–1.2.8). Electron's worker_threads load scripts from
+ * asar directly; only the native .node and the wasm need unpacking.
+ */
 function resolveHistoryWorkerPath() {
-  const inside = path.join(__dirname, 'history-worker.js');
-  if (__dirname.includes(`${path.sep}app.asar${path.sep}`) && !__dirname.includes(`${path.sep}app.asar.unpacked${path.sep}`)) {
-    const unpacked = inside.replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
-    if (fs.existsSync(unpacked)) return unpacked;
-  }
-  return inside;
+  return path.join(__dirname, 'history-worker.js');
 }
 
 function packagedResourcePaths() {
@@ -24,9 +26,6 @@ function packagedResourcePaths() {
       : '',
     sqlJsWasm: resources
       ? path.join(resources, 'app.asar.unpacked', 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm')
-      : '',
-    historyWorkerUnpacked: resources
-      ? path.join(resources, 'app.asar.unpacked', 'src', 'main', 'history-worker.js')
       : '',
   };
 }

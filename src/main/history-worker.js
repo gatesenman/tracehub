@@ -5,12 +5,17 @@
 // keeps the main process responsive no matter how large the profile is.
 
 const { parentPort } = require('worker_threads');
-const { readProfileHistory } = require('./browsers');
+const { readProfileHistory, readProfileVisits } = require('./browsers');
 
 parentPort.on('message', async (msg) => {
   try {
-    const items = await readProfileHistory(msg.browser, msg.profile, msg.since);
-    parentPort.postMessage({ id: msg.id, items });
+    if (msg.cursor !== undefined) {
+      const page = await readProfileVisits(msg.browser, msg.profile, msg.cursor || {}, msg.options || {});
+      parentPort.postMessage({ id: msg.id, page });
+    } else {
+      const items = await readProfileHistory(msg.browser, msg.profile, msg.since);
+      parentPort.postMessage({ id: msg.id, items });
+    }
   } catch (e) {
     parentPort.postMessage({ id: msg.id, error: String((e && e.message) || e) });
   }

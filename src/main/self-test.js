@@ -244,7 +244,6 @@ async function runSelfTest(ctx) {
     for (const [name, p] of Object.entries({
       nativeNode: packed.nativeNode,
       sqlJsWasm: packed.sqlJsWasm,
-      historyWorkerUnpacked: packed.historyWorkerUnpacked,
       extensionDir: packed.extensionDir,
     })) {
       if (!p || !fs.existsSync(p)) missing.push(name);
@@ -253,7 +252,7 @@ async function runSelfTest(ctx) {
       ok: missing.length === 0,
       missing,
       paths: packed,
-      detail: 'verified unpacked native, wasm, worker, and extension files exist on disk',
+      detail: 'verified unpacked native, wasm, and extension files exist on disk (the history worker stays inside app.asar with its sibling modules)',
     };
   }));
 
