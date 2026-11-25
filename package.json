@@ -63,8 +63,7 @@
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3/**",
-      "node_modules/sql.js/**",
-      "src/main/history-worker.js"
+      "node_modules/sql.js/**"
     ],
     "extraResources": [
       {
