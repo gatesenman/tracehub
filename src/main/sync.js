@@ -28,15 +28,20 @@ class SyncEngine {
     this._worker = null;
     this._workerJobs = new Map();
     this._workerSeq = 0;
+    this._workerBroken = false;
+    this.workerError = null;
+    this.lastErrors = [];
   }
 
   // History files can be hundreds of MB; parse them in a worker thread so the
-  // UI/main process never stalls. Falls back to in-process reading if the
-  // worker cannot start.
+  // UI/main process never stalls. If the worker cannot start or dies (e.g. a
+  // packaging mistake makes its require() fail), fall back to in-process
+  // reading for good instead of failing every profile silently.
   _readHistory(browser, profile, since) {
+    if (this._workerBroken) return readProfileHistory(browser, profile, since);
     if (!this._worker) {
       try {
-        this._worker = new Worker(resolveHistoryWorkerPath());
+        this._worker = this._createWorker();
         this._worker.on('message', (msg) => {
           const job = this._workerJobs.get(msg.id);
           if (!job) return;
@@ -44,21 +49,19 @@ class SyncEngine {
           if (msg.error) job.reject(new Error(msg.error));
           else job.resolve(msg.items);
         });
-        this._worker.on('error', (err) => {
-          for (const job of this._workerJobs.values()) job.reject(err);
-          this._workerJobs.clear();
-          try { this._worker.terminate(); } catch (e) { /* ignore */ }
-          this._worker = null;
+        this._worker.on('error', (err) => this._onWorkerFailure(err));
+        this._worker.on('exit', (code) => {
+          if (this._workerJobs.size) this._onWorkerFailure(new Error(`history worker exited (${code})`));
         });
-        this._worker.unref();
+        if (typeof this._worker.unref === 'function') this._worker.unref();
       } catch (e) {
-        this._worker = null;
+        this._onWorkerFailure(e);
         return readProfileHistory(browser, profile, since);
       }
     }
     const id = ++this._workerSeq;
     return new Promise((resolve, reject) => {
-      this._workerJobs.set(id, { resolve, reject });
+      this._workerJobs.set(id, { resolve, reject, browser, profile, since });
       this._worker.postMessage({
         id,
         since,
@@ -66,6 +69,29 @@ class SyncEngine {
         profile: { profile: profile.profile, historyPath: profile.historyPath },
       });
     });
+  }
+
+  _createWorker() {
+    return new Worker(resolveHistoryWorkerPath());
+  }
+
+  // The worker itself is broken (load error, crash): remember why, read the
+  // pending jobs in-process, and stop using the worker.
+  _onWorkerFailure(err) {
+    const reason = String((err && err.message) || err);
+    if (!this._workerBroken) console.error('history worker unavailable, reading in-process:', reason);
+    this._workerBroken = true;
+    this.workerError = reason;
+    const jobs = [...this._workerJobs.values()];
+    this._workerJobs.clear();
+    const w = this._worker;
+    this._worker = null;
+    if (w) { try { w.terminate(); } catch (e) { /* ignore */ } }
+    for (const job of jobs) {
+      Promise.resolve()
+        .then(() => readProfileHistory(job.browser, job.profile, job.since))
+        .then(job.resolve, job.reject);
+    }
   }
 
   async start() {
@@ -196,6 +222,8 @@ class SyncEngine {
     } finally {
       this._syncing = false;
     }
+    this.lastErrors = errors;
+    if (errors.length) console.error('history sync errors:', JSON.stringify(errors));
     if (inserted > 0) {
       this.onUpdate({ inserted, errors });
     }
