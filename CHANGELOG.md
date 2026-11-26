@@ -1,10 +1,10 @@
 # 更新日志
 
-## 未发布 — 同步时不再整份重拷浏览器 History
+## 1.2.10 — 2026-11-27 同步时不再整份重拷浏览器 History
 
-- **性能**：每次同步不再把 Chrome / Edge / Firefox 的 History（或 places.sqlite）整份复制到临时文件，再用 sql.js 把整库读进内存。现在按 Profile 在用户数据目录的 `history-cache` 里保留一份快照：源库的 SQLite 变更计数、体积、WAL / journal 没变就直接复用，0 字节拷贝；有变化时只回写有差异的 1 MiB 块，再拷贝通常很小的 `-wal` / `-journal`。查询改走 better-sqlite3 按页读取。sql.js 仅在原生打开失败时回退，行为与 1.2.9 相同（含热 journal 回滚、WAL 未检查点的访问、游标补采与去重）。
-- 不会用 SQLite 打开浏览器正在用的那份库，回滚热 journal 只发生在快照上。不会复制 `-shm`（里面是进程锁，复制过去会干扰原生打开；SQLite 会自己重建 WAL 索引）。
-- 尚未在 Windows 真机或真实 Edge / Chrome 上验收；发布前需要再做一次真机验证。版本号仍为 1.2.9，已发布的 `v1.2.9` 标签未改动。
+- **性能**：每次同步不再把 Chrome / Edge / Firefox 的 History（或 places.sqlite）整份复制到临时文件，再用 sql.js 把整库读进内存。现在按 Profile 在用户数据目录的 `history-cache` 里保留一份快照：源库的 SQLite 变更计数、体积、WAL / journal 没变就直接复用，主文件 0 字节拷贝；有变化时只回写有差异的 1 MiB 块，再拷贝通常很小的 `-wal` / `-journal`。查询改走 better-sqlite3 按页读取。sql.js 仅在原生打开失败时回退。
+- 1.2.9 的行为保持不变：worker 留在 asar、主进程回退、热 journal 只在快照上回滚、游标补采、按 (网址, 时间, 浏览器, Profile) 去重。不会用 SQLite 打开浏览器正在用的那份库。不会复制 `-shm`。
+- 安装包仍未签名，Windows 可能弹出 SmartScreen。已发布的 `v1.2.9` 标签未改动。
 
 ## 1.2.9 — 2026-11-26 修复浏览器历史采集 + 补采未开软件期间的历史
 
