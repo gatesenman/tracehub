@@ -98,6 +98,14 @@
     return '还没有页签快照。可先用「从会话文件读取页签（无需扩展）」选择 Chrome / Edge 配置、预览再保存；或安装并配对扩展以读取更接近实时的页签。不会从浏览历史猜测活动标签。';
   }
 
+  function todaySaveOpenTabsTitle() {
+    return '已配对扩展时，保存此刻真实已打开的页签。未配对时改为从 Chrome / Edge 会话文件读取已写盘的页签，先预览再确认保存。这不是浏览历史，也可能不是此刻页签条。';
+  }
+
+  function todaySaveOpenTabsUnpairedHint() {
+    return '未配对扩展。改为从会话文件读取已写盘的页签，请先预览再确认保存。这不是此刻页签条的实时同步。';
+  }
+
   function previewHonestyTone(origin, preview) {
     const o = origin || (preview && preview.origin) || {};
     const p = preview || {};
@@ -145,6 +153,8 @@
     needsLargeReopenConfirm,
     largeReopenConfirmText,
     emptyWorkspaceHint,
+    todaySaveOpenTabsTitle,
+    todaySaveOpenTabsUnpairedHint,
     previewHonestyTone,
     profileListStatus,
   };

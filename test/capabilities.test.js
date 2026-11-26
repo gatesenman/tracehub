@@ -112,7 +112,12 @@ describe('today session reopen is visible and honest', () => {
     assert.match(js, /按浏览历史用系统默认浏览器打开网址，不是恢复当时已打开的页签/);
     assert.match(js, /不是恢复当时的窗口、分组或登录状态/);
     assert.doesNotMatch(js, /恢复整段工作现场/);
-    assert.match(js, /保存已打开的页签需要已配对/);
+    assert.doesNotMatch(js, /保存已打开的页签需要已配对/);
+    assert.doesNotMatch(js, /未配对时不能读取当前页签/);
+    assert.match(js, /startSessionFileAfterSnapshots/);
+    assert.match(js, /maybeStartPendingSessionFileCapture/);
+    assert.match(js, /todaySaveOpenTabsTitle/);
+    assert.match(js, /todaySaveOpenTabsUnpairedHint/);
     assert.match(css, /hour-label \.restore-btn \{[^}]*opacity:\s*1/s);
     assert.doesNotMatch(css, /hour-label:hover \.restore-btn/);
   });

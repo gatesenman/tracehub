@@ -2013,7 +2013,10 @@ async function showToday() {
   reopenToday.title = '根据今日浏览历史，用系统默认浏览器打开网址。不是恢复当前已打开的页签。';
   reopenToday.onclick = () => openSessionModal(day, null);
   const saveLive = el('button', 'restore-btn', '保存已打开的页签');
-  saveLive.title = '需要已安装并配对的 Chrome / Edge 扩展，保存的是真实已打开的页签。';
+  const sessionUi = sessionFileUi();
+  saveLive.title = sessionUi && sessionUi.todaySaveOpenTabsTitle
+    ? sessionUi.todaySaveOpenTabsTitle()
+    : '已配对扩展时，保存此刻真实已打开的页签。未配对时改为从会话文件读取已写盘的页签，先预览再确认保存。';
   saveLive.onclick = async () => {
     let paired = false;
     try {
@@ -2022,9 +2025,15 @@ async function showToday() {
       const d = cap ? cap.describeBridge(st) : st;
       paired = !!(d && d.recentlySeen);
     } catch (e) { paired = false; }
-    if (!paired) {
-      toast('保存已打开的页签需要已配对的 Chrome / Edge 扩展。即将打开快照页，可按快捷安装步骤完成配对。未配对时不能读取当前页签。');
+    if (paired) {
+      switchTab('snapshots');
+      return;
     }
+    const hint = sessionUi && sessionUi.todaySaveOpenTabsUnpairedHint
+      ? sessionUi.todaySaveOpenTabsUnpairedHint()
+      : '未配对扩展。改为从会话文件读取已写盘的页签，请先预览再确认保存。';
+    toast(hint);
+    state.startSessionFileAfterSnapshots = true;
     switchTab('snapshots');
   };
   const curBtnTop = el('button', 'restore-btn ai', 'AI 整理今日历史');
@@ -3003,10 +3012,18 @@ async function showSnapshots(selectId) {
   if (!snapState.list.length) {
     const ui = window.TraceHubSessionFileUi;
     body.appendChild(emptyState('layers', ui ? ui.emptyWorkspaceHint() : '还没有页签快照。可先从会话文件读取（无需扩展），或安装扩展。不会从浏览历史猜测活动标签。', '从会话文件读取', () => startSessionFileCapture()));
+    maybeStartPendingSessionFileCapture();
     return;
   }
   const id = selectId || (snapState.current && snapState.current.id) || snapState.list[0].id;
   await openSnapshotDetail(id);
+  maybeStartPendingSessionFileCapture();
+}
+
+function maybeStartPendingSessionFileCapture() {
+  if (!state.startSessionFileAfterSnapshots) return;
+  state.startSessionFileAfterSnapshots = false;
+  startSessionFileCapture();
 }
 
 function sessionFileUi() {
