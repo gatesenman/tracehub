@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { openDatabaseFromFile, queryAll } = require('./sqlengine');
+const { snapshotHistory, cleanupSnapshot } = require('./history-snapshot');
 
 // ---------------------------------------------------------------------------
 // Time conversions
@@ -131,27 +132,20 @@ function detectBrowsers() {
   return result;
 }
 
-// Copy the (possibly locked) history db to a temp file so we can open it while
-// the browser is running. Chromium/Firefox keep a shared lock; a plain file
-// copy is safe for read-only access.
-function copyToTemp(historyPath, tag) {
-  const tmp = path.join(os.tmpdir(), `bhh-${tag}-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
-  fs.copyFileSync(historyPath, tmp);
-  // Firefox uses WAL (-wal/-shm); Chromium uses a rollback journal
-  // (History-journal). Copy whichever side files exist so recent visits show
-  // and an in-flight write can be rolled back on the copy (see sqlengine).
-  for (const suffix of ['-wal', '-shm', '-journal']) {
-    const extra = historyPath + suffix;
-    if (fs.existsSync(extra)) {
-      try { fs.copyFileSync(extra, tmp + suffix); } catch (e) { /* ignore */ }
+// Snapshot a (possibly locked) live history db into the on-disk cache and
+// open that copy. The live file is never opened with SQLite. Unchanged
+// sources reuse the cache; otherwise only dirty 1 MiB blocks are rewritten.
+async function withHistorySnapshot(historyPath, tag, fn) {
+  const snap = snapshotHistory(historyPath, tag);
+  try {
+    const db = await openDatabaseFromFile(snap.filePath);
+    try {
+      return await fn(db, snap);
+    } finally {
+      db.close();
     }
-  }
-  return tmp;
-}
-
-function cleanupTemp(tmp) {
-  for (const suffix of ['', '-wal', '-shm', '-journal']) {
-    try { fs.unlinkSync(tmp + suffix); } catch (e) { /* ignore */ }
+  } finally {
+    cleanupSnapshot(snap);
   }
 }
 
@@ -159,11 +153,8 @@ function cleanupTemp(tmp) {
 // sinceMs: only return visits with visitTime > sinceMs (incremental sync).
 async function readProfileHistory(browser, profile, sinceMs = 0) {
   const tag = `${browser.id}-${profile.profile}`.replace(/[^\w]+/g, '_');
-  const tmp = copyToTemp(profile.historyPath, tag);
   const items = [];
-  try {
-    const db = await openDatabaseFromFile(tmp);
-    try {
+  await withHistorySnapshot(profile.historyPath, tag, async (db) => {
       if (browser.engine === 'firefox') {
         const sinceMicros = sinceMs > 0 ? sinceMs * 1000 : 0;
         const rows = queryAll(
@@ -217,14 +208,7 @@ async function readProfileHistory(browser, profile, sinceMs = 0) {
           });
         }
       }
-      db.close();
-    } catch (e) {
-      db.close();
-      throw e;
-    }
-  } finally {
-    cleanupTemp(tmp);
-  }
+  });
   return items;
 }
 
@@ -276,13 +260,10 @@ async function readProfileVisits(browser, profile, cursor = {}, { limit = VISIT_
   const params = hasId ? [Number(cursor.visitId), sinceSource] : [sinceSource];
 
   const tag = `${browser.id}-${profile.profile}`.replace(/[^\w]+/g, '_');
-  const tmp = copyToTemp(profile.historyPath, tag);
   const items = [];
   let next = { visitId: hasId ? Number(cursor.visitId) : 0, visitTime: sinceMs };
   let hasMore = false;
-  try {
-    const db = await openDatabaseFromFile(tmp);
-    try {
+  await withHistorySnapshot(profile.historyPath, tag, async (db) => {
       const rows = queryAll(db, visitsQuery(browser.engine, hasId, limit), params);
       hasMore = rows.length > limit;
       for (const r of rows.slice(0, limit)) {
@@ -300,14 +281,7 @@ async function readProfileVisits(browser, profile, cursor = {}, { limit = VISIT_
           fromUrl: r.from_url && r.from_url !== r.url ? r.from_url : null,
         });
       }
-      db.close();
-    } catch (e) {
-      db.close();
-      throw e;
-    }
-  } finally {
-    cleanupTemp(tmp);
-  }
+  });
   return { items, cursor: next, hasMore };
 }
 
@@ -354,11 +328,8 @@ function readChromiumBookmarks(profile) {
 
 async function readFirefoxBookmarks(browser, profile) {
   const tag = `${browser.id}-${profile.profile}-bm`.replace(/[^\w]+/g, '_');
-  const tmp = copyToTemp(profile.historyPath, tag);
   const out = [];
-  try {
-    const db = await openDatabaseFromFile(tmp);
-    try {
+  await withHistorySnapshot(profile.historyPath, tag, async (db) => {
       const folders = new Map(); // id -> {title, parent}
       for (const r of queryAll(db, 'SELECT id, parent, title FROM moz_bookmarks WHERE type = 2')) {
         folders.set(Number(r.id), { title: r.title || '', parent: Number(r.parent) });
@@ -383,14 +354,7 @@ async function readFirefoxBookmarks(browser, profile) {
       for (const r of rows) {
         out.push({ url: r.url, title: r.title || r.url, folder: folderPath(Number(r.parent)) });
       }
-      db.close();
-    } catch (e) {
-      db.close();
-      throw e;
-    }
-  } finally {
-    cleanupTemp(tmp);
-  }
+  });
   return out;
 }
 
