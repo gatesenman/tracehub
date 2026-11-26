@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.2.10 — 2026-11-27 同步时不再整份重拷浏览器 History
+
+- **性能**：每次同步不再把 Chrome / Edge / Firefox 的 History（或 places.sqlite）整份复制到临时文件，再用 sql.js 把整库读进内存。现在按 Profile 在用户数据目录的 `history-cache` 里保留一份快照：源库的 SQLite 变更计数、体积、WAL / journal 没变就直接复用，主文件 0 字节拷贝；有变化时只回写有差异的 1 MiB 块，再拷贝通常很小的 `-wal` / `-journal`。查询改走 better-sqlite3 按页读取。sql.js 仅在原生打开失败时回退。
+- 1.2.9 的行为保持不变：worker 留在 asar、主进程回退、热 journal 只在快照上回滚、游标补采、按 (网址, 时间, 浏览器, Profile) 去重。不会用 SQLite 打开浏览器正在用的那份库。不会复制 `-shm`。
+- **今日页**：未配对扩展时，「保存已打开的页签」不再提示必须先装扩展、也不能读页签；改为进入已有的会话文件读取流程（先预览再确认保存）。已配对时仍走扩展路径。
+- 已在用户 Windows 本机用隔离目录验证：约 833.5 MiB 的真实 Edge History 首次写入 421 ms，未变化时第二次复用 0 字节 / 2 ms，快照访问数与隔离副本一致（38,083 条）。真实 Chrome/Edge 会话文件只读预览可读到已打开的 http(s) 页签（Edge Default 614 个）。详见 `docs/验收记录.md`。
+- 安装包仍未签名，Windows 可能弹出 SmartScreen。已发布的 `v1.2.9` 标签未改动。
+
 ## 1.2.9 — 2026-11-26 修复浏览器历史采集 + 补采未开软件期间的历史
 
 - **修复（根因）**：1.2.1 起打包配置把 `src/main/history-worker.js` 单独解包到 `app.asar.unpacked`，但它要 `require('./browsers')`，解包目录里没有这个文件，安装版每次读取浏览器历史都报 “Cannot find module './browsers'”，而且错误被吞掉，界面只表现为“今日 0 次访问”。现在 worker 留在 `app.asar` 里与依赖模块同目录（Electron 的 worker 可直接从 asar 加载）。

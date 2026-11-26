@@ -41,6 +41,18 @@ describe('session-file UI entry and honest capability copy', () => {
     assert.ok(lists.unavailable.some((s) => /tabId|分组|实时/.test(s)));
     assert.ok(!lists.unavailable.some((s) => s === '读取当前真实已打开的页签（不会从历史猜测）'));
   });
+
+  it('gives the Today save-open-tabs button an unpaired path into preview-then-save, not a dead end', () => {
+    assert.match(ui.todaySaveOpenTabsTitle(), /会话文件/);
+    assert.match(ui.todaySaveOpenTabsTitle(), /预览再确认保存/);
+    assert.match(ui.todaySaveOpenTabsTitle(), /已配对扩展/);
+    assert.doesNotMatch(ui.todaySaveOpenTabsTitle(), /不能读取当前页签/);
+    assert.match(ui.todaySaveOpenTabsUnpairedHint(), /未配对扩展/);
+    assert.match(ui.todaySaveOpenTabsUnpairedHint(), /会话文件/);
+    assert.match(ui.todaySaveOpenTabsUnpairedHint(), /预览再确认保存/);
+    assert.doesNotMatch(ui.todaySaveOpenTabsUnpairedHint(), /不能读取当前页签/);
+    assert.doesNotMatch(ui.todaySaveOpenTabsUnpairedHint(), /需要已配对的 Chrome \/ Edge 扩展/);
+  });
 });
 
 describe('renderer wires the session-file entry', () => {
@@ -51,6 +63,8 @@ describe('renderer wires the session-file entry', () => {
     const js = fs.readFileSync(path.join(__dirname, '../src/renderer/renderer.js'), 'utf8');
     assert.match(html, /session-file-ui\.js/);
     assert.match(js, /startSessionFileCapture/);
+    assert.match(js, /startSessionFileAfterSnapshots/);
+    assert.match(js, /maybeStartPendingSessionFileCapture/);
     assert.match(js, /sessionFileListProfiles/);
     assert.match(js, /sessionFileSave/);
     assert.match(js, /session-file-window-reopen/);

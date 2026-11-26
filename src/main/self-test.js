@@ -157,7 +157,8 @@ async function runSelfTest(ctx) {
           : db.all('SELECT url FROM urls');
         const ok = Array.isArray(rows) && rows.some((r) => r.url === 'https://example.com/');
         if (typeof db.close === 'function') db.close();
-        return { ok, detail: 'opened a synthetic Chrome-like history with sql.js (not a user profile)' };
+        const engineName = db && db._kind === 'native-snapshot' ? 'better-sqlite3' : 'sql.js';
+        return { ok, detail: `opened a synthetic Chrome-like history with ${engineName} (not a user profile)` };
       } catch (e) {
         try { db.close(); } catch (e2) { /* ignore */ }
         throw e;

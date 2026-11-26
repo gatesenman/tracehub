@@ -306,6 +306,10 @@ async function startAppBridge() {
 
 async function bootstrap() {
   const userData = app.getPath('userData');
+  process.env.TRACEHUB_USER_DATA = process.env.TRACEHUB_USER_DATA || userData;
+  if (!process.env.TRACEHUB_HISTORY_CACHE) {
+    process.env.TRACEHUB_HISTORY_CACHE = path.join(userData, 'history-cache');
+  }
   const selfTest = process.env.TRACEHUB_SELFTEST === '1' || process.env.TRACEHUB_SELFTEST === 'true';
   if (!selfTest) migrateUserData(userData);
   config = new Config(path.join(userData, 'config.json'));

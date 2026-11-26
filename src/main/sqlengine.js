@@ -10,9 +10,12 @@ let SQL = null;
 // sql.js keeps the whole database in WASM memory and can only persist by
 // exporting the entire image, which blocks the main thread for seconds once
 // the history grows — the app's own store therefore uses better-sqlite3
-// (native, incremental WAL writes). sql.js remains only for READING browser
-// history copies, since those need buffer-level WAL merging of locked files.
-// This wrapper exposes the small sql.js surface store.js relies on.
+// (native, incremental WAL writes). Browser history is snapshotted to a
+// cache (see history-snapshot.js) and then opened with better-sqlite3 so
+// a 800+ MB Edge History is not loaded into WASM. sql.js remains a
+// fallback if the native open fails, and still merges -wal / -journal
+// into the buffer first. This wrapper exposes the small sql.js surface
+// store.js relies on.
 function cleanParam(v) {
   if (v === undefined) return null;
   if (typeof v === 'boolean') return v ? 1 : 0;
@@ -63,6 +66,52 @@ class NativeDb {
 
   close() {
     try { this.raw.close(); } catch (e) { /* ignore */ }
+  }
+}
+
+// A copied browser-history DB. Unlike NativeDb this does NOT switch the
+// file to WAL or run checkpoints — the snapshot should stay a cheap
+// byte-for-byte image except when SQLite itself rolls back a hot journal
+// on the copy. Never point this at a live browser History file.
+class HistorySnapshotDb {
+  constructor(filePath, opts) {
+    this._kind = 'native-snapshot';
+    this.raw = new Database(filePath, opts);
+  }
+
+  all(sql, params = []) {
+    return this.raw.prepare(sql).all(params.map(cleanParam));
+  }
+
+  close() {
+    try { this.raw.close(); } catch (e) { /* ignore */ }
+  }
+}
+
+function journalNeedsRecovery(filePath) {
+  const journalPath = filePath + '-journal';
+  if (!fs.existsSync(journalPath)) return false;
+  try {
+    return isHotJournal(new Uint8Array(fs.readFileSync(journalPath)));
+  } catch (e) {
+    return true;
+  }
+}
+
+// Open a snapshot with native SQLite. A hot journal is recovered on the
+// COPY (read-write). Otherwise the file is opened read-only, which still
+// sees committed WAL frames. Returns null if better-sqlite3 cannot open it.
+function openNativeHistorySnapshot(filePath) {
+  const recover = journalNeedsRecovery(filePath);
+  try {
+    if (recover) return new HistorySnapshotDb(filePath, { fileMustExist: true });
+    return new HistorySnapshotDb(filePath, { readonly: true, fileMustExist: true });
+  } catch (e) {
+    try {
+      return new HistorySnapshotDb(filePath, { fileMustExist: true });
+    } catch (e2) {
+      return null;
+    }
   }
 }
 
@@ -181,9 +230,16 @@ function applyRollbackJournal(dbBuf, journalBuf) {
   return origPages ? out.subarray(0, origPages * pageSize) : out;
 }
 
-// Open a SQLite database from a file buffer (read-only usage). If a matching
-// -wal file exists next to it, committed WAL frames are merged in first.
+// Open a snapshotted browser history database. Prefer native SQLite so a
+// large History file is paged in rather than copied into WASM. The sql.js
+// path is kept as a fallback and still merges -wal / -journal itself.
 async function openDatabaseFromFile(filePath) {
+  const native = openNativeHistorySnapshot(filePath);
+  if (native) return native;
+  return openDatabaseFromFileSqlJs(filePath);
+}
+
+async function openDatabaseFromFileSqlJs(filePath) {
   const sql = await getSQL();
   let buffer = new Uint8Array(fs.readFileSync(filePath));
   const journalPath = filePath + '-journal';
@@ -219,7 +275,7 @@ function persist(db) {
 
 // Run a query and return an array of row objects (works for both engines).
 function queryAll(db, sql, params = []) {
-  if (db instanceof NativeDb) return db.all(sql, params);
+  if (db instanceof NativeDb || (db && db._kind === 'native-snapshot')) return db.all(sql, params);
   const stmt = db.prepare(sql);
   try {
     stmt.bind(params);
@@ -236,6 +292,7 @@ function queryAll(db, sql, params = []) {
 module.exports = {
   getSQL,
   openDatabaseFromFile,
+  openDatabaseFromFileSqlJs,
   openPersistentDatabase,
   persist,
   queryAll,
