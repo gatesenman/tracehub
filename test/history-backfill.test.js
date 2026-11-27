@@ -14,6 +14,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 const { Store } = require('../src/main/store');
 const { SyncEngine, HISTORY_CATCHUP_META } = require('../src/main/sync');
+const { dayKeyShanghai, dayBoundsShanghai } = require('../src/main/day-tz');
 const { readProfileVisits } = require('../src/main/browsers');
 const { applyRollbackJournal, isHotJournal } = require('../src/main/sqlengine');
 
@@ -387,5 +388,136 @@ describe('full history catch-up past an existing cursor', () => {
     const again = await runCatchUp(store, browsers, opts);
     assert.equal(again.inserted, 0);
     assert.equal(storeRows(store).length, 10);
+  });
+});
+
+describe('repair a specific calendar day from browser history', () => {
+  let dir;
+  let store;
+
+  beforeEach(async () => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tracehub-repair-day-'));
+    store = new Store(path.join(dir, 'hub.sqlite'));
+    await store.init();
+  });
+
+  afterEach(() => {
+    try { store.close(); } catch (e) { /* ignore */ }
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  function uniqueKeys(rows) {
+    return new Set(rows.map((r) => `${r.url}|${r.t}|${r.browser}|${r.profile}`));
+  }
+
+  async function engine(browsers, opts = {}) {
+    const sync = new SyncEngine(store, { isSyncAllowed: () => true, ...opts });
+    sync.browsers = browsers;
+    sync.running = true;
+    return sync;
+  }
+
+  it('fills an old empty day far beyond 7 days without touching later days', async () => {
+    const hist = new ChromeHistory(path.join(dir, 'chrome', 'Default', 'History'));
+    const oldDayStart = T0; // 2026-11-20 10:00 Asia/Shanghai
+    const oldDay = dayKeyShanghai(oldDayStart);
+    const recentStart = T0 + 20 * 24 * HOUR; // more than 7 days later
+    const recentDay = dayKeyShanghai(recentStart);
+    assert.notEqual(oldDay, recentDay);
+    hist.visit('https://old-a.example/', oldDayStart);
+    hist.visit('https://old-b.example/', oldDayStart + HOUR);
+    hist.visit('https://old-c.example/', oldDayStart + 2 * HOUR);
+    hist.visit('https://recent-a.example/', recentStart);
+    hist.visit('https://recent-b.example/', recentStart + HOUR);
+    store.upsertVisits([
+      { url: 'https://recent-a.example/', title: 't', visitTime: recentStart, browser: 'chrome', browserName: 'Google Chrome', profile: 'Default' },
+      { url: 'https://recent-b.example/', title: 't', visitTime: recentStart + HOUR, browser: 'chrome', browserName: 'Google Chrome', profile: 'Default' },
+    ]);
+    store.setSyncCursor('chrome', 'Default', { visitId: 5, visitTime: recentStart + HOUR });
+    store.setMeta(HISTORY_CATCHUP_META, 'done');
+    const browsers = [chromeBrowser(hist.file)];
+    const boundsOld = dayBoundsShanghai(oldDay);
+    assert.equal(store.countVisitsInRange(boundsOld.start, boundsOld.end), 0);
+
+    const sync = await engine(browsers);
+    const incremental = await sync.syncOnce(false);
+    assert.equal(incremental.inserted, 0);
+    assert.equal(store.countVisitsInRange(boundsOld.start, boundsOld.end), 0);
+
+    const res = await sync.repairDay(oldDay);
+    sync.stop();
+    assert.deepEqual(res.errors, []);
+    assert.equal(res.inserted, 3);
+    assert.equal(res.day, oldDay);
+    assert.equal(store.countVisitsInRange(boundsOld.start, boundsOld.end), 3);
+    const recentBounds = dayBoundsShanghai(recentDay);
+    assert.equal(store.countVisitsInRange(recentBounds.start, recentBounds.end), 2);
+    assert.equal(storeRows(store).length, 5);
+    assert.equal(uniqueKeys(storeRows(store)).size, 5);
+  });
+
+  it('repairs a day that already has partial data so the hub matches the browser, keeping extra hub rows', async () => {
+    const hist = new ChromeHistory(path.join(dir, 'chrome', 'Default', 'History'));
+    const dayStart = T0 + 3 * HOUR; // still 2026-11-20
+    const day = dayKeyShanghai(dayStart);
+    hist.visit('https://keep-a.example/', dayStart);
+    hist.visit('https://miss-b.example/', dayStart + 10 * 60000);
+    hist.visit('https://miss-c.example/', dayStart + 20 * 60000);
+    hist.visit('https://keep-d.example/', dayStart + 30 * 60000);
+    hist.visit('https://miss-e.example/', dayStart + 40 * 60000);
+    store.upsertVisits([
+      { url: 'https://keep-a.example/', title: 't', visitTime: dayStart, browser: 'chrome', browserName: 'Google Chrome', profile: 'Default' },
+      { url: 'https://keep-d.example/', title: 't', visitTime: dayStart + 30 * 60000, browser: 'chrome', browserName: 'Google Chrome', profile: 'Default' },
+      // A hub-only row that is no longer in the browser file must be kept.
+      { url: 'https://hub-only.example/', title: 't', visitTime: dayStart + 50 * 60000, browser: 'chrome', browserName: 'Google Chrome', profile: 'Default' },
+    ]);
+    store.setSyncCursor('chrome', 'Default', { visitId: 5, visitTime: dayStart + 40 * 60000 });
+    store.setMeta(HISTORY_CATCHUP_META, 'done');
+    const bounds = dayBoundsShanghai(day);
+    assert.equal(store.countVisitsInRange(bounds.start, bounds.end), 3);
+
+    const sync = await engine([chromeBrowser(hist.file)]);
+    const res = await sync.repairDay(day);
+    assert.deepEqual(res.errors, []);
+    assert.equal(res.inserted, 3);
+    assert.equal(store.countVisitsInRange(bounds.start, bounds.end), 6);
+    const urls = storeRows(store).map((r) => r.url).sort();
+    assert.deepEqual(urls, [
+      'https://hub-only.example/',
+      'https://keep-a.example/',
+      'https://keep-d.example/',
+      'https://miss-b.example/',
+      'https://miss-c.example/',
+      'https://miss-e.example/',
+    ]);
+    assert.equal(uniqueKeys(storeRows(store)).size, 6);
+
+    const second = await sync.repairDay(day);
+    sync.stop();
+    assert.equal(second.inserted, 0);
+    assert.equal(store.countVisitsInRange(bounds.start, bounds.end), 6);
+    assert.equal(uniqueKeys(storeRows(store)).size, 6);
+  });
+
+  it('full catch-up also fills an old empty day, and a second run inserts 0', async () => {
+    const hist = new ChromeHistory(path.join(dir, 'chrome', 'Default', 'History'));
+    const oldDay = dayKeyShanghai(T0);
+    hist.visit('https://ancient.example/', T0);
+    hist.visit('https://recent.example/', T0 + 20 * 24 * HOUR);
+    store.upsertVisits([
+      { url: 'https://recent.example/', title: 't', visitTime: T0 + 20 * 24 * HOUR, browser: 'chrome', browserName: 'Google Chrome', profile: 'Default' },
+    ]);
+    store.setSyncCursor('chrome', 'Default', { visitId: 2, visitTime: T0 + 20 * 24 * HOUR });
+    store.setMeta(HISTORY_CATCHUP_META, 'done');
+    const sync = await engine([chromeBrowser(hist.file)]);
+    const first = await sync.catchUpFromStart();
+    assert.equal(first.inserted, 1);
+    assert.ok(first.repairedDays.includes(oldDay));
+    assert.equal(storeRows(store).length, 2);
+    const second = await sync.catchUpFromStart();
+    sync.stop();
+    assert.equal(second.inserted, 0);
+    assert.equal(storeRows(store).length, 2);
+    assert.equal(uniqueKeys(storeRows(store)).size, 2);
   });
 });

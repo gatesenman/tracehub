@@ -255,6 +255,21 @@ class Store {
     return rows.length && rows[0].t ? Number(rows[0].t) : 0;
   }
 
+  countVisitsInRange(fromMs, toMs, browser = null, profile = null) {
+    let sql = 'SELECT COUNT(*) AS c FROM visits WHERE visit_time >= ? AND visit_time < ?';
+    const params = [Number(fromMs) || 0, Number(toMs) || 0];
+    if (browser) {
+      sql += ' AND browser = ?';
+      params.push(browser);
+    }
+    if (profile != null && profile !== '') {
+      sql += ' AND profile = ?';
+      params.push(profile);
+    }
+    const rows = queryAll(this.db, sql, params);
+    return rows.length ? Number(rows[0].c) || 0 : 0;
+  }
+
   // Return distinct day buckets (local time) that have visits, newest first.
   // Aggregated in SQL so huge histories never materialize in JS memory.
   listDays() {

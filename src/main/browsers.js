@@ -329,6 +329,63 @@ async function readProfileVisits(browser, profile, cursor = {}, { limit = VISIT_
   return { items, cursor: next, hasMore };
 }
 
+// Visits whose time falls in [fromMs, toMs). Used to repair one calendar day
+// from the browser's own history without depending on the sync cursor.
+function visitsRangeQuery(engine, limit) {
+  if (engine === 'firefox') {
+    return `SELECT v.id AS vid, p.url AS url, p.title AS title, v.visit_date AS t,
+                   fp.url AS from_url
+              FROM moz_historyvisits v
+              JOIN moz_places p ON p.id = v.place_id
+              LEFT JOIN moz_historyvisits fv ON fv.id = v.from_visit
+              LEFT JOIN moz_places fp ON fp.id = fv.place_id
+             WHERE v.visit_date >= ? AND v.visit_date < ? AND v.id > ?
+             ORDER BY v.id ASC
+             LIMIT ${limit + 1}`;
+  }
+  return `SELECT v.id AS vid, u.url AS url, u.title AS title, v.visit_time AS t,
+                 fu.url AS from_url
+            FROM visits v
+            JOIN urls u ON u.id = v.url
+            LEFT JOIN visits fv ON fv.id = v.from_visit
+            LEFT JOIN urls fu ON fu.id = fv.url
+           WHERE v.visit_time >= ? AND v.visit_time < ? AND v.id > ?
+           ORDER BY v.id ASC
+           LIMIT ${limit + 1}`;
+}
+
+async function readProfileVisitsInRange(browser, profile, fromMs, toMs, { limit = VISIT_PAGE_LIMIT, afterVisitId = 0 } = {}) {
+  const firefox = browser.engine === 'firefox';
+  const toSource = (ms) => (firefox ? ms * 1000 : (ms + CHROME_EPOCH_OFFSET_MS) * 1000);
+  const lo = Math.max(0, Number(fromMs) || 0);
+  const hi = Math.max(lo, Number(toMs) || 0);
+  const items = [];
+  let lastId = Number(afterVisitId) || 0;
+  if (hi <= lo) return { items, hasMore: false, lastId };
+  const tag = `${browser.id}-${profile.profile}-range`.replace(/[^\w]+/g, '_');
+  let hasMore = false;
+  await withHistorySnapshot(profile.historyPath, tag, async (db) => {
+    if (!hasSqliteTable(db, visitTableForEngine(browser.engine))) return;
+    const rows = queryAll(db, visitsRangeQuery(browser.engine, limit), [toSource(lo), toSource(hi), lastId]);
+    hasMore = rows.length > limit;
+    for (const r of rows.slice(0, limit)) {
+      const visitTime = firefox ? firefoxTimeToMs(r.t) : chromeTimeToMs(r.t);
+      const vid = Number(r.vid) || 0;
+      if (vid > lastId) lastId = vid;
+      items.push({
+        url: r.url,
+        title: r.title || r.url,
+        visitTime,
+        browser: browser.id,
+        browserName: browser.name,
+        profile: profile.profile,
+        fromUrl: r.from_url && r.from_url !== r.url ? r.from_url : null,
+      });
+    }
+  });
+  return { items, hasMore, lastId };
+}
+
 // Read history from all detected browsers/profiles since a timestamp.
 async function readAllHistory(sinceMs = 0, browsers = null) {
   const detected = browsers || detectBrowsers();
@@ -429,6 +486,7 @@ module.exports = {
   isPlausibleHistorySqlite,
   readProfileHistory,
   readProfileVisits,
+  readProfileVisitsInRange,
   readAllHistory,
   readAllBookmarks,
   chromeTimeToMs,

@@ -433,6 +433,8 @@ function registerIpc() {
 
   ipcMain.handle('sync:catch-up', async () => sync.catchUpFromStart());
 
+  ipcMain.handle('sync:repair-day', async (_e, day) => sync.repairDay(day));
+
   ipcMain.handle('stats:get', async () => store.stats());
 
   ipcMain.handle('days:list', async () => store.listDays());

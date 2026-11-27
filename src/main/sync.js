@@ -3,7 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const { Worker } = require('worker_threads');
-const { detectBrowsers, readProfileVisits } = require('./browsers');
+const { detectBrowsers, readProfileVisits, readProfileVisitsInRange } = require('./browsers');
+const { dayKeyShanghai, dayBoundsShanghai } = require('./day-tz');
 const { resolveHistoryWorkerPath } = require('./paths');
 
 // One-shot (and manually repeatable) full catch-up of visits that still
@@ -219,8 +220,8 @@ class SyncEngine {
   // including visits made while TraceHub was not running. The cursor lives in
   // the store and only advances after the page has been written, so a crash
   // re-reads (and dedupes) instead of skipping. Without a cursor (first run,
-  // or upgrading from <=1.2.8 which kept none) start a little before the
-  // newest stored visit, or from the beginning of the browser's history.
+  // new profile, or a catch-up reset) start at the beginning of that
+  // browser's history — recovery is not limited to a 7-day window.
   _catchUpState() {
     return this.store.getMeta ? this.store.getMeta(HISTORY_CATCHUP_META, '') : '';
   }
@@ -248,12 +249,7 @@ class SyncEngine {
       ? this.store.getSyncCursor(browser.id, profile.profile)
       : null;
     if (!cursor) {
-      if (this._catchUpPending()) {
-        cursor = { visitId: null, visitTime: 0 };
-      } else {
-        const latest = this.store.latestVisitTime(browser.id, profile.profile);
-        cursor = { visitId: null, visitTime: latest > 0 ? Math.max(0, latest - this.backfillOverlapMs) : 0 };
-      }
+      cursor = { visitId: null, visitTime: 0 };
     }
     let inserted = 0;
     let hasMore = false;
@@ -307,10 +303,14 @@ class SyncEngine {
   }
 
   // Manual 「重新同步历史」: reset cursors and page from the start until
-  // every enabled profile is exhausted. Safe to run more than once.
+  // every enabled profile is exhausted, filling any calendar day that is
+  // empty or short in the hub. Not limited to a 7-day window. Safe to
+  // run more than once. Existing hub rows are kept; only missing keys
+  // are inserted.
   async catchUpFromStart() {
-    if (!this.running) return { inserted: 0, skipped: 'not-running' };
-    if (this.isSyncAllowed && !this.isSyncAllowed()) return { inserted: 0, skipped: 'onboarding' };
+    if (!this.running) return { inserted: 0, skipped: 'not-running', repairedDays: [] };
+    if (this.isSyncAllowed && !this.isSyncAllowed()) return { inserted: 0, skipped: 'onboarding', repairedDays: [] };
+    const before = this._hubDayCounts();
     this._beginCatchUpIfNeeded(true);
     let inserted = 0;
     const errors = [];
@@ -322,8 +322,95 @@ class SyncEngine {
       if (last.skipped) break;
       if (this._catchUpState() === 'done') break;
     }
-    return { inserted, errors, catchUpDone: this._catchUpState() === 'done' };
+    const repairedDays = this._daysWithNewVisits(before);
+    return { inserted, errors, catchUpDone: this._catchUpState() === 'done', repairedDays };
+  }
+
+  _hubDayCounts() {
+    if (!this.store.countVisitsInRange) return {};
+    const counts = {};
+    const rows = this.store.listDays ? this.store.listDays() : [];
+    for (const r of rows) counts[r.day] = Number(r.count) || 0;
+    return counts;
+  }
+
+  _daysWithNewVisits(before) {
+    const after = this._hubDayCounts();
+    const days = [];
+    for (const [day, n] of Object.entries(after)) {
+      if (n > (before[day] || 0)) days.push(day);
+    }
+    days.sort();
+    return days;
+  }
+
+  // Repair one Asia/Shanghai calendar day from the browsers' own history.
+  // Inserts missing (url, time, browser, profile) rows. Does not delete hub
+  // visits for that day that are no longer in the browser, and does not
+  // touch other days. Does not reset incremental cursors.
+  async repairDay(day) {
+    if (!this.running) return { inserted: 0, skipped: 'not-running', day };
+    if (this.isSyncAllowed && !this.isSyncAllowed()) return { inserted: 0, skipped: 'onboarding', day };
+    const bounds = dayBoundsShanghai(day);
+    if (!bounds) return { inserted: 0, skipped: 'bad-day', day };
+    const hubBefore = this.store.countVisitsInRange
+      ? this.store.countVisitsInRange(bounds.start, bounds.end)
+      : 0;
+    let inserted = 0;
+    let browserVisits = 0;
+    const errors = [];
+    if (this._syncing) {
+      // Wait out an in-flight incremental tick rather than skipping the repair.
+      for (let i = 0; i < 200 && this._syncing; i++) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      if (this._syncing) return { inserted: 0, skipped: 'busy', day, hubBefore };
+    }
+    this._syncing = true;
+    try {
+      for (const browser of this.browsers) {
+        for (const profile of browser.profiles) {
+          if (!this._profileAllowed(browser.id, profile.profile)) continue;
+          try {
+            let afterVisitId = 0;
+            for (let page = 0; page < this.maxPagesPerSync; page++) {
+              const res = await readProfileVisitsInRange(
+                browser,
+                profile,
+                bounds.start,
+                bounds.end,
+                { ...this.readOptions, afterVisitId }
+              );
+              const items = this._filterItems(res.items || []);
+              browserVisits += items.length;
+              inserted += this.store.upsertVisits(items);
+              if (!res.hasMore) break;
+              if (!res.lastId || res.lastId <= afterVisitId) break;
+              afterVisitId = res.lastId;
+            }
+          } catch (e) {
+            errors.push({ browser: browser.id, profile: profile.profile, error: String(e.message || e) });
+          }
+        }
+      }
+    } finally {
+      this._syncing = false;
+    }
+    this.lastErrors = errors;
+    const hubAfter = this.store.countVisitsInRange
+      ? this.store.countVisitsInRange(bounds.start, bounds.end)
+      : hubBefore + inserted;
+    if (inserted > 0) this.onUpdate({ inserted, errors, day });
+    return {
+      day,
+      inserted,
+      errors,
+      browserVisits,
+      hubBefore,
+      hubAfter,
+      repairedDays: inserted > 0 ? [day] : [],
+    };
   }
 }
 
-module.exports = { SyncEngine, HISTORY_CATCHUP_META };
+module.exports = { SyncEngine, HISTORY_CATCHUP_META, dayKeyShanghai, dayBoundsShanghai };
