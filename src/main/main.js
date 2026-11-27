@@ -150,14 +150,14 @@ function refreshTrayMenu() {
   if (!tray) return;
   const until = privacyPausedUntil();
   const paused = until > Date.now();
-  tray.setToolTip(paused ? `${APP_TITLE} · 隐私暂停中（至 ${new Date(until).toLocaleTimeString('zh-CN')}）` : APP_TITLE);
+  tray.setToolTip(paused ? `${APP_TITLE} · 暂停中（至 ${new Date(until).toLocaleTimeString('zh-CN')}）` : APP_TITLE);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '显示主窗口', click: () => showMainWindow() },
     { label: '快速搜索 (Alt+Space)', click: () => { showMainWindow(); mainWindow.webContents.send('focus:search'); } },
     { type: 'separator' },
     paused
       ? { label: `恢复记录（暂停至 ${new Date(until).toLocaleTimeString('zh-CN')}）`, click: () => privacyResume() }
-      : { label: '隐私暂停 30 分钟', click: () => privacyPause(30) },
+      : { label: '暂停 3 分钟', click: () => privacyPause(3) },
     { type: 'separator' },
     { label: '退出', click: () => { quitting = true; app.quit(); } },
   ]));

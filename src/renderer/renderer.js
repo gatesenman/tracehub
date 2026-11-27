@@ -484,8 +484,8 @@ async function refreshPrivacyBtn() {
     const paused = pausedUntil > Date.now();
     btn.classList.toggle('paused', paused);
     btn.title = paused
-      ? `隐私暂停中，至 ${fmtTime(pausedUntil)}。期间的访问不会被记录，点击可提前恢复`
-      : '隐私暂停：暂停期间的访问不会被记录';
+      ? `已暂停，至 ${fmtTime(pausedUntil)}。期间的访问不会被记录，点击可提前恢复`
+      : '暂停：暂停期间的访问不会被记录';
   } catch (e) { /* ignore */ }
 }
 
@@ -510,11 +510,11 @@ function showPrivacyMenu() {
     });
   }
   const durLabel = (m) => (m >= 60 ? `${m / 60} 小时` : `${m} 分钟`);
-  for (const m of [15, 30, 60, 120]) {
+  for (const m of [3, 15, 30, 60, 120]) {
     add('shield', paused ? `改为暂停 ${durLabel(m)}` : `暂停 ${durLabel(m)}`, async () => {
       const r = await hub.privacyPause(m);
       await refreshPrivacyBtn();
-      toast(`隐私暂停中，至 ${fmtTime(r.pausedUntil)}，期间的访问不会被记录`);
+      toast(`已暂停，至 ${fmtTime(r.pausedUntil)}，期间的访问不会被记录`);
     });
   }
   menu.classList.remove('hidden');
