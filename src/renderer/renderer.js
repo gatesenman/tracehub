@@ -622,12 +622,41 @@ function renderStats(stats) {
   box.appendChild(top);
 }
 
+async function repairVisibleDay(day) {
+  const target = day || (state.mode === 'today' ? todayKey() : state.currentDay);
+  if (!target) {
+    toast('请先在时间树或今日中选择一天');
+    return;
+  }
+  setStatus(`正在重新同步 ${target}…`);
+  try {
+    const r = await hub.repairDay(target);
+    const n = (r && r.inserted) || 0;
+    const msg = r && r.skipped
+      ? (r.skipped === 'onboarding' ? '请先完成引导后再重新同步' : '当前无法重新同步这一天')
+      : `已重新同步 ${target}，新补入 ${n} 条访问`;
+    setStatus(msg);
+    toast(msg);
+    await loadDays();
+    if (state.mode === 'today' && target === todayKey()) await showToday();
+    else if (state.currentDay === target) await selectDay(target);
+  } catch (e) {
+    const msg = '重新同步这一天失败：' + (e && e.message ? e.message : String(e));
+    setStatus(msg);
+    toast(msg);
+  }
+}
+
 function renderTimeline(day, tl, stats) {
   const header = document.getElementById('contentHeader');
   header.innerHTML = '';
   header.appendChild(withIcon(el('span'), 'calendar', ` ${day}`));
   const dedupNote = tl.distinct != null && tl.distinct < tl.total ? `，去重后 ${tl.distinct} 条` : '';
   header.appendChild(el('span', 'sub', `${tl.total} 条访问${dedupNote}` + (state.browserFilter ? '（已筛选）' : '')));
+  const dayRepairBtn = el('button', 'restore-btn', '重新同步这一天');
+  dayRepairBtn.title = '从各浏览器现存历史把这一天缺失或异常的访问补进软件。其他日期不受影响，已有记录不会被删掉。';
+  dayRepairBtn.onclick = () => repairVisibleDay(day);
+  header.appendChild(dayRepairBtn);
   // Day summary / Markdown-log actions live in the topbar; remember what they
   // should act on.
   state.lastTimeline = { day, tl };
@@ -642,7 +671,8 @@ function renderTimeline(day, tl, stats) {
   const body = document.getElementById('contentBody');
   body.innerHTML = '';
   if (tl.total === 0) {
-    body.appendChild(emptyState('calendar', '这一天没有记录', '立即同步', () => document.getElementById('btnSync').click()));
+    const empty = emptyState('calendar', '这一天没有记录', '重新同步这一天', () => repairVisibleDay(day));
+    body.appendChild(empty);
     return;
   }
   const renderHour = (h) => {
@@ -2038,8 +2068,12 @@ async function showToday() {
   };
   const curBtnTop = el('button', 'restore-btn ai', 'AI 整理今日历史');
   curBtnTop.onclick = () => curateTodayFlow();
+  const repairToday = el('button', 'restore-btn', '重新同步这一天');
+  repairToday.title = '从各浏览器现存历史把今天缺失或异常的访问补进软件。其他日期不受影响，已有记录不会被删掉。';
+  repairToday.onclick = () => repairVisibleDay(day);
   headerActions.appendChild(reopenToday);
   headerActions.appendChild(saveLive);
+  headerActions.appendChild(repairToday);
   headerActions.appendChild(curBtnTop);
   header.appendChild(headerActions);
   document.getElementById('summaryBox').classList.add('hidden');
@@ -2418,6 +2452,8 @@ async function openSessionRange(fromMs, toMs, label) {
 // ------------------------- command palette ---------------------------------
 const PALETTE_ACTIONS = [
   { label: '立即同步所有浏览器', run: () => document.getElementById('btnSync').click() },
+  { label: '重新同步历史', run: () => document.getElementById('cfgCatchUpHistory').click() },
+  { label: '重新同步这一天', run: () => repairVisibleDay() },
   { label: 'AI 整理分类', run: () => document.getElementById('btnOrganize').click() },
   { label: '导出历史 (CSV/JSON)', run: () => document.getElementById('btnExport').click() },
   { label: '打开设置', run: () => document.getElementById('btnSettings').click() },
@@ -3816,6 +3852,33 @@ async function init() {
     const r = await hub.syncNow();
     setStatus(`同步完成，新增 ${r.inserted} 条`);
     await loadDays();
+  };
+  document.getElementById('cfgCatchUpHistory').onclick = async () => {
+    const btn = document.getElementById('cfgCatchUpHistory');
+    const state = document.getElementById('catchUpState');
+    btn.disabled = true;
+    state.textContent = '正在从头补同步…';
+    setStatus('正在重新同步历史…');
+    try {
+      const r = await hub.catchUpHistory();
+      const n = (r && r.inserted) || 0;
+      const days = (r && r.repairedDays) || [];
+      const dayNote = days.length ? `，涉及 ${days.length} 天` : '';
+      const msg = r && r.skipped
+        ? (r.skipped === 'onboarding' ? '请先完成引导后再重新同步' : '当前无法重新同步')
+        : `重新同步完成，新补入 ${n} 条访问${dayNote}`;
+      state.textContent = msg;
+      setStatus(msg);
+      toast(msg);
+      await loadDays();
+    } catch (e) {
+      const msg = '重新同步失败：' + (e && e.message ? e.message : String(e));
+      state.textContent = msg;
+      setStatus(msg);
+      toast(msg);
+    } finally {
+      btn.disabled = false;
+    }
   };
   document.getElementById('btnOrganize').onclick = async () => {
     setStatus('AI 整理中…');

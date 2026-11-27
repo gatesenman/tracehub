@@ -1,5 +1,14 @@
 # 更新日志
 
+## 1.2.11 — 2026-11-27 跳过空的 Opera / Firefox 历史桩文件，并从浏览器现存历史重新同步丢失的访问
+
+- **修复**：Opera Stable 在用户数据根目录常留一份 0 字节的 `History` 桩文件，真正的访问记在 `Default/History`。1.2.10 会把桩文件也当成 Default，查询 `visits` 表时报 “no such table: visits”，并与真实 Default 抢同一个同步游标。现在只把看起来是 SQLite 数据库的 History（文件头为 `SQLite format 3`、至少 100 字节）当作配置；若已有 `Default/History`，不再使用根目录那份。
+- 旧的 Firefox 配置里 0 字节的 `places.sqlite`（例如 `ziby480f.default`）同样不再当历史库打开，避免 “no such table: moz_historyvisits”。若文件已打开但没有访问表，返回空结果，不再当作失败。有历史表但 0 条访问的配置仍正常同步。
+- **重新同步历史**：不是只补最近 7 天。只要某一天（按 Asia/Shanghai）在软件里没有数据，或那天的数据明显少于浏览器自己记下的访问，就从各浏览器现存历史把那天补上。按（网址、时间、浏览器、Profile）去重插入缺失记录；其他日期不受影响；浏览器里已经没有、因而无法替换的记录不会删除。升级到本版本后自动扫描浏览器历史里出现过的所有日期并补一次（大库按页继续，完成后不会每次启动都从头扫）。「今日」和时间树提供「重新同步这一天」；设置里的「重新同步历史」会找出空缺或异常的日期一并补上，完成后显示新补入的条数。
+- 已在用户 Windows 本机用隔离 userData 跑打包版端到端：真实 Opera Default 24 条与浏览器 `Default/History` 及快照完全一致；`ziby480f.default` 被跳过且未写入访问；另一 Firefox 配置 86 条一致；Edge / Vivaldi / Chrome Profile 4 与本次同步使用的 history-cache 快照一致；重复键 0。未向用户正在用的 Opera / Firefox 写入测试访问。详见 `docs/验收记录.md`。
+- 安装包仍未签名，Windows 可能弹出 SmartScreen。已发布的 `v1.2.10`、`v1.2.9` 标签未改动。
+
+
 ## 1.2.10 — 2026-11-27 同步时不再整份重拷浏览器 History
 
 - **性能**：每次同步不再把 Chrome / Edge / Firefox 的 History（或 places.sqlite）整份复制到临时文件，再用 sql.js 把整库读进内存。现在按 Profile 在用户数据目录的 `history-cache` 里保留一份快照：源库的 SQLite 变更计数、体积、WAL / journal 没变就直接复用，主文件 0 字节拷贝；有变化时只回写有差异的 1 MiB 块，再拷贝通常很小的 `-wal` / `-journal`。查询改走 better-sqlite3 按页读取。sql.js 仅在原生打开失败时回退。

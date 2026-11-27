@@ -5,6 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('api', {
   detectBrowsers: () => ipcRenderer.invoke('browsers:detect'),
   syncNow: () => ipcRenderer.invoke('sync:now'),
+  catchUpHistory: () => ipcRenderer.invoke('sync:catch-up'),
+  repairDay: (day) => ipcRenderer.invoke('sync:repair-day', day),
   getStats: () => ipcRenderer.invoke('stats:get'),
   listDays: () => ipcRenderer.invoke('days:list'),
   timelineForDay: (day, browser) => ipcRenderer.invoke('timeline:day', { day, browser }),
