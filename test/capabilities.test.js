@@ -172,6 +172,7 @@ describe('live-tab permission prompt (install / first launch)', () => {
     assert.equal(cap.shouldShowLiveTabPermissionPrompt({ prompted: true, recentlySeen: false }), false);
     assert.equal(cap.shouldShowLiveTabPermissionPrompt({ prompted: false, recentlySeen: true }), false);
     assert.equal(cap.shouldShowLiveTabPermissionPrompt({ prompted: true, recentlySeen: true }), false);
+    assert.ok(cap.LIVE_TAB_PERM_WAIT_MS >= 1000);
   });
 
   it('tells the user that only authorized pairing enables live tabs, and that skip does not block history or session files', () => {
@@ -199,6 +200,9 @@ describe('live-tab permission prompt (install / first launch)', () => {
     assert.match(html, /id="liveTabPermSkip"/);
     assert.match(html, /从会话文件读取页签/);
     assert.match(js, /maybePromptLiveTabPermission/);
+    assert.match(js, /LIVE_TAB_PERM_WAIT_MS/);
+    assert.match(js, /Already-paired extensions usually heart-beat/);
+
     assert.match(js, /skipLiveTabPermissionPrompt/);
     assert.match(js, /liveTabPermissionPrompted: true/);
     assert.doesNotMatch(js, /skipLiveTabPermissionPrompt[\s\S]{0,400}completeOnboarding/);

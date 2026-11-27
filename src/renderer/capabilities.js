@@ -10,6 +10,8 @@
   else root.TraceHubCapabilities = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   const RECENT_MS = 5 * 60 * 1000;
+  // Wait this long for an already-paired extension heartbeat before showing the first-launch prompt.
+  const LIVE_TAB_PERM_WAIT_MS = 3000;
 
   function describeBridge(status, now) {
     const t = now == null ? Date.now() : now;
@@ -146,6 +148,7 @@
 
   return {
     RECENT_MS,
+    LIVE_TAB_PERM_WAIT_MS,
     describeBridge,
     bridgeChipText,
     historySessionDisclaimer,

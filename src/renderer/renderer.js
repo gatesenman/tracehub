@@ -3617,18 +3617,28 @@ async function maybePromptLiveTabPermission() {
   if (!cap || !cap.shouldShowLiveTabPermissionPrompt) return;
   const onboard = document.getElementById('onboardModal');
   if (onboard && !onboard.classList.contains('hidden')) return;
-  let recentlySeen = false;
-  try {
-    const st = await hub.bridgeStatus();
-    recentlySeen = !!(cap.describeBridge(st).recentlySeen);
-  } catch (e) { recentlySeen = false; }
   let prompted = false;
   try {
     const cfg = await hub.getConfig();
     prompted = !!cfg.liveTabPermissionPrompted;
   } catch (e) { prompted = false; }
-  if (!cap.shouldShowLiveTabPermissionPrompt({ prompted, recentlySeen })) {
-    if (recentlySeen && !prompted) await markLiveTabPermissionPrompted();
+  if (prompted) return;
+
+  // Already-paired extensions usually heart-beat shortly after launch.
+  // Wait briefly so an upgrade user who already paired does not see the prompt.
+  let recentlySeen = false;
+  const waitMs = (cap.LIVE_TAB_PERM_WAIT_MS != null) ? Number(cap.LIVE_TAB_PERM_WAIT_MS) : 3000;
+  const deadline = Date.now() + (Number.isFinite(waitMs) ? waitMs : 3000);
+  for (;;) {
+    try {
+      const st = await hub.bridgeStatus();
+      recentlySeen = !!(cap.describeBridge(st).recentlySeen);
+    } catch (e) { recentlySeen = false; }
+    if (recentlySeen || Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!cap.shouldShowLiveTabPermissionPrompt({ prompted: false, recentlySeen })) {
+    if (recentlySeen) await markLiveTabPermissionPrompted();
     return;
   }
   showLiveTabPermissionModal();
