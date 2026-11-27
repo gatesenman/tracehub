@@ -55,7 +55,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "include": "build/installer.nsh",
+      "include": "installer.nsh",
       "artifactName": "TraceHub-${version}-setup.exe"
     },
     "portable": {
