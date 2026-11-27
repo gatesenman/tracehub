@@ -1,6 +1,6 @@
 {
   "name": "browser-history-hub",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "description": "拾迹 TraceHub：多浏览器历史、页签快照工作区、AI 搜索与整理",
   "main": "src/main/main.js",
   "scripts": {
@@ -55,6 +55,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
+      "include": "installer.nsh",
       "artifactName": "TraceHub-${version}-setup.exe"
     },
     "portable": {

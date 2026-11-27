@@ -286,6 +286,26 @@
 
   <div id="ctxMenu" class="ctx-menu hidden"></div>
   <div id="privacyMenu" class="ctx-menu hidden"></div>
+
+  <div id="liveTabPermModal" class="modal hidden">
+    <div class="modal-card">
+      <h3 id="liveTabPermTitle">开启实时页签权限</h3>
+      <p class="muted" id="liveTabPermBody"></p>
+      <div id="liveTabPermSteps" class="hidden"></div>
+      <div id="liveTabPermActions" class="test-row hidden">
+        <button id="liveTabPermOpenDir" type="button">打开扩展目录</button>
+        <button id="liveTabPermChrome" type="button">打开 Chrome 扩展页</button>
+        <button id="liveTabPermEdge" type="button">打开 Edge 扩展页</button>
+        <button id="liveTabPermCopyToken" type="button">复制配对令牌</button>
+      </div>
+      <p class="muted">选择稍后不会影响浏览历史同步，也不会影响「从会话文件读取页签」。</p>
+      <div class="modal-actions">
+        <button id="liveTabPermSkip" type="button">稍后</button>
+        <button id="liveTabPermEnable" class="primary" type="button">开启权限</button>
+      </div>
+    </div>
+  </div>
+
   <div id="onboardModal" class="modal hidden">
     <div class="modal-card">
       <h3>欢迎使用拾迹 TraceHub</h3>

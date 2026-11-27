@@ -684,6 +684,7 @@ function registerIpc() {
       thumbsEnabled: !!c.thumbsEnabled,
       contentFetchEnabled: !!c.contentFetchEnabled,
       onboardingCompleted: !!c.onboardingCompleted,
+      liveTabPermissionPrompted: !!c.liveTabPermissionPrompted,
       enabledProfiles: c.enabledProfiles,
       bridgeEnabled: c.bridgeEnabled !== false,
       bridgePort: c.bridgePort || 17862,

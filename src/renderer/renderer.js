@@ -3000,6 +3000,11 @@ async function updateBridgeChip() {
     const d = cap ? cap.describeBridge(st) : { listening: !!(st && st.listening), recentlySeen: false };
     if (cap && cap.pairingSucceeded && cap.pairingSucceeded(bridgeChipPrev, d)) {
       toast(cap.pairingSuccessMessage());
+      const permModal = document.getElementById('liveTabPermModal');
+      if (permModal && !permModal.classList.contains('hidden')) {
+        await markLiveTabPermissionPrompted();
+        hideLiveTabPermissionModal();
+      }
     }
     if (d) bridgeChipPrev = { recentlySeen: !!d.recentlySeen };
     chip.textContent = cap ? cap.bridgeChipText(d) : (d.listening ? '页签桥：已监听' : '页签桥：未监听');
@@ -3546,6 +3551,99 @@ async function setupSnapshots() {
   });
 }
 
+
+async function markLiveTabPermissionPrompted() {
+  try { await hub.updateConfig({ liveTabPermissionPrompted: true }); } catch (e) { /* ignore */ }
+}
+
+function hideLiveTabPermissionModal() {
+  const modal = document.getElementById('liveTabPermModal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function skipLiveTabPermissionPrompt() {
+  await markLiveTabPermissionPrompted();
+  hideLiveTabPermissionModal();
+  const cap = window.TraceHubCapabilities;
+  const copy = cap && cap.liveTabPermissionPromptCopy ? cap.liveTabPermissionPromptCopy() : null;
+  toast((copy && copy.skipNote) || '已跳过。历史同步和从会话文件读取页签不受影响。');
+}
+
+function showLiveTabPermissionModal() {
+  const modal = document.getElementById('liveTabPermModal');
+  if (!modal) return;
+  const cap = window.TraceHubCapabilities;
+  const copy = cap && cap.liveTabPermissionPromptCopy ? cap.liveTabPermissionPromptCopy() : {
+    title: '开启实时页签权限',
+    body: '浏览历史同步和「从会话文件读取页签」不需要扩展。只有完成扩展配对后才能实时获取已打开的页签。',
+    enableLabel: '开启权限',
+    skipLabel: '稍后',
+  };
+  const title = document.getElementById('liveTabPermTitle');
+  const body = document.getElementById('liveTabPermBody');
+  const enable = document.getElementById('liveTabPermEnable');
+  const skip = document.getElementById('liveTabPermSkip');
+  const steps = document.getElementById('liveTabPermSteps');
+  const actions = document.getElementById('liveTabPermActions');
+  if (title) title.textContent = copy.title;
+  if (body) body.textContent = copy.body;
+  if (enable) enable.textContent = copy.enableLabel;
+  if (skip) skip.textContent = copy.skipLabel;
+  if (steps) {
+    steps.innerHTML = '';
+    steps.classList.add('hidden');
+    const list = (cap && cap.quickInstallSteps) ? cap.quickInstallSteps() : [];
+    for (const s of list) steps.appendChild(el('p', 'muted', s));
+  }
+  if (actions) actions.classList.add('hidden');
+  if (skip) skip.onclick = () => { skipLiveTabPermissionPrompt().catch(() => {}); };
+  if (enable) enable.onclick = () => {
+    if (steps) steps.classList.remove('hidden');
+    if (actions) actions.classList.remove('hidden');
+  };
+  const openDir = document.getElementById('liveTabPermOpenDir');
+  const chromeBtn = document.getElementById('liveTabPermChrome');
+  const edgeBtn = document.getElementById('liveTabPermEdge');
+  const copyTok = document.getElementById('liveTabPermCopyToken');
+  if (openDir) openDir.onclick = () => hub.openExtensionDir && hub.openExtensionDir();
+  if (chromeBtn) chromeBtn.onclick = () => openOfficialExtensionsPage('chrome');
+  if (edgeBtn) edgeBtn.onclick = () => openOfficialExtensionsPage('edge');
+  if (copyTok) copyTok.onclick = () => copyPairingToken();
+  modal.classList.remove('hidden');
+}
+
+async function maybePromptLiveTabPermission() {
+  const cap = window.TraceHubCapabilities;
+  if (!cap || !cap.shouldShowLiveTabPermissionPrompt) return;
+  const onboard = document.getElementById('onboardModal');
+  if (onboard && !onboard.classList.contains('hidden')) return;
+  let prompted = false;
+  try {
+    const cfg = await hub.getConfig();
+    prompted = !!cfg.liveTabPermissionPrompted;
+  } catch (e) { prompted = false; }
+  if (prompted) return;
+
+  // Already-paired extensions usually heart-beat shortly after launch.
+  // Wait briefly so an upgrade user who already paired does not see the prompt.
+  let recentlySeen = false;
+  const waitMs = (cap.LIVE_TAB_PERM_WAIT_MS != null) ? Number(cap.LIVE_TAB_PERM_WAIT_MS) : 3000;
+  const deadline = Date.now() + (Number.isFinite(waitMs) ? waitMs : 3000);
+  for (;;) {
+    try {
+      const st = await hub.bridgeStatus();
+      recentlySeen = !!(cap.describeBridge(st).recentlySeen);
+    } catch (e) { recentlySeen = false; }
+    if (recentlySeen || Date.now() >= deadline) break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (!cap.shouldShowLiveTabPermissionPrompt({ prompted: false, recentlySeen })) {
+    if (recentlySeen) await markLiveTabPermissionPrompted();
+    return;
+  }
+  showLiveTabPermissionModal();
+}
+
 async function maybeOnboard() {
   const cfg = await hub.getConfig();
   if (cfg.onboardingCompleted) return;
@@ -3575,6 +3673,7 @@ async function maybeOnboard() {
   document.getElementById('onboardLater').onclick = () => {
     document.getElementById('onboardModal').classList.add('hidden');
     toast('尚未开始同步。打开设置或再次启动可继续完成引导。');
+    maybePromptLiveTabPermission().catch(() => {});
   };
   document.getElementById('onboardSave').onclick = async () => {
     const enabledProfiles = [...document.querySelectorAll('#onboardBrowsers input[type=checkbox]:checked')].map((cb) => ({
@@ -3590,6 +3689,7 @@ async function maybeOnboard() {
     await setupBrowserFilter();
     await loadDays();
     switchTab('today');
+    await maybePromptLiveTabPermission();
   };
 }
 
@@ -3966,6 +4066,7 @@ async function init() {
 
   setupSnapshots();
   await maybeOnboard();
+  await maybePromptLiveTabPermission();
   await setupBrowserFilter();
 
   let refreshTimer = null;

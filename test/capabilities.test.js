@@ -165,3 +165,52 @@ describe('restore/close completion copy and next-batch offer', () => {
     assert.equal(cap.bridgeChipText(d), '页签桥：扩展已连接 · 17863');
   });
 });
+
+describe('live-tab permission prompt (install / first launch)', () => {
+  it('shows only when not yet prompted and the extension is not already paired', () => {
+    assert.equal(cap.shouldShowLiveTabPermissionPrompt({ prompted: false, recentlySeen: false }), true);
+    assert.equal(cap.shouldShowLiveTabPermissionPrompt({ prompted: true, recentlySeen: false }), false);
+    assert.equal(cap.shouldShowLiveTabPermissionPrompt({ prompted: false, recentlySeen: true }), false);
+    assert.equal(cap.shouldShowLiveTabPermissionPrompt({ prompted: true, recentlySeen: true }), false);
+    assert.ok(cap.LIVE_TAB_PERM_WAIT_MS >= 1000);
+  });
+
+  it('tells the user that only authorized pairing enables live tabs, and that skip does not block history or session files', () => {
+    const copy = cap.liveTabPermissionPromptCopy();
+    assert.match(copy.title, /实时页签权限/);
+    assert.match(copy.body, /浏览历史同步/);
+    assert.match(copy.body, /从会话文件读取页签/);
+    assert.match(copy.body, /只有完成授权后才能实时获取/);
+    assert.match(copy.body, /不会替你静默安装或改动扩展/);
+    assert.match(copy.enableLabel, /开启权限/);
+    assert.equal(copy.skipLabel, '稍后');
+    assert.match(copy.skipNote, /历史同步/);
+    assert.match(copy.skipNote, /从会话文件读取页签不受影响/);
+    assert.equal(cap.describeBridge({}, 0).canReadSessionFiles, true);
+    assert.equal(cap.describeBridge({}, 0).canReopenHistoryUrls, true);
+  });
+
+  it('wires a first-launch or install prompt that can be skipped without touching onboarding or silently installing extensions', () => {
+    const js = fs.readFileSync(path.join(__dirname, '../src/renderer/renderer.js'), 'utf8');
+    const html = fs.readFileSync(path.join(__dirname, '../src/renderer/index.html'), 'utf8');
+    const cfg = fs.readFileSync(path.join(__dirname, '../src/main/config.js'), 'utf8');
+    const nsh = fs.readFileSync(path.join(__dirname, '../build/installer.nsh'), 'utf8');
+    assert.match(cfg, /liveTabPermissionPrompted/);
+    assert.match(html, /id="liveTabPermModal"/);
+    assert.match(html, /id="liveTabPermSkip"/);
+    assert.match(html, /从会话文件读取页签/);
+    assert.match(js, /maybePromptLiveTabPermission/);
+    assert.match(js, /LIVE_TAB_PERM_WAIT_MS/);
+    assert.match(js, /Already-paired extensions usually heart-beat/);
+
+    assert.match(js, /skipLiveTabPermissionPrompt/);
+    assert.match(js, /liveTabPermissionPrompted: true/);
+    assert.doesNotMatch(js, /skipLiveTabPermissionPrompt[\s\S]{0,400}completeOnboarding/);
+    assert.doesNotMatch(js, /--load-extension/);
+    assert.doesNotMatch(nsh, /--load-extension/);
+    assert.match(nsh, /IfSilent/);
+    assert.match(nsh, /首次启动 TraceHub 时，会提示你开启实时页签权限/);
+    assert.match(nsh, /从会话文件读取页签/);
+    assert.match(nsh, /不会替你安装或改动浏览器扩展/);
+  });
+});
