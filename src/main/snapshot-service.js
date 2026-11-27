@@ -455,6 +455,7 @@ function publicSlice(config) {
   const c = config.get();
   return {
     onboardingCompleted: !!c.onboardingCompleted,
+    liveTabPermissionPrompted: !!c.liveTabPermissionPrompted,
     enabledProfiles: c.enabledProfiles,
     thumbsEnabled: !!c.thumbsEnabled,
     contentFetchEnabled: !!c.contentFetchEnabled,

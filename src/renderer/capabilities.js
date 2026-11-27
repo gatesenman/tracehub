@@ -108,6 +108,24 @@
     return '以后若上架 Chrome 网上应用店或 Microsoft Edge 扩展商店，安装步骤会更短。本版还没有商店发布账号和审核条件，因此不提供商店一键安装，请按上面三步加载已解压的扩展。卸载只需在浏览器扩展页移除该扩展。';
   }
 
+
+  function shouldShowLiveTabPermissionPrompt(opts) {
+    const o = opts || {};
+    if (o.prompted) return false;
+    if (o.recentlySeen) return false;
+    return true;
+  }
+
+  function liveTabPermissionPromptCopy() {
+    return {
+      title: '开启实时页签权限',
+      body: '浏览历史同步和「从会话文件读取页签」不需要扩展，现在就可以用。若要获取浏览器里此刻打开的页签、按分组恢复或按页签关闭，需要在 Chrome 或 Edge 中加载配套扩展并完成配对。只有完成授权后才能实时获取这些数据。应用不会替你静默安装或改动扩展。',
+      enableLabel: '开启权限',
+      skipLabel: '稍后',
+      skipNote: '已跳过。历史同步和从会话文件读取页签不受影响。需要时再到「页签快照」或设置里开启。',
+    };
+  }
+
   function withoutExtensionCapabilities() {
     return {
       available: [
@@ -137,6 +155,8 @@
     pairingSuccessMessage,
     webStoreFutureNote,
     withoutExtensionCapabilities,
+    shouldShowLiveTabPermissionPrompt,
+    liveTabPermissionPromptCopy,
     describeCommandResult,
     shouldOfferNextRestoreBatch,
   };

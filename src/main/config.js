@@ -22,6 +22,7 @@ class Config {
       thumbsEnabled: false,
       contentFetchEnabled: false,
       onboardingCompleted: false,
+      liveTabPermissionPrompted: false, // first-launch prompt to enable live-tab extension pairing
       enabledProfiles: null, // null = not chosen yet; [] = none; [{browserId, profile}]
       bridgeEnabled: true,
       bridgePort: 17862,
