@@ -173,6 +173,11 @@ class Store {
     }));
   }
 
+  clearAllSyncCursors() {
+    this.db.run("DELETE FROM meta WHERE key LIKE 'syncCursor:%'");
+    this._scheduleSave();
+  }
+
   // Insert a batch of visits, ignoring duplicates. Returns number inserted.
   upsertVisits(items) {
     if (!items || items.length === 0) return 0;

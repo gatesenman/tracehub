@@ -2418,6 +2418,7 @@ async function openSessionRange(fromMs, toMs, label) {
 // ------------------------- command palette ---------------------------------
 const PALETTE_ACTIONS = [
   { label: '立即同步所有浏览器', run: () => document.getElementById('btnSync').click() },
+  { label: '重新同步历史', run: () => document.getElementById('cfgCatchUpHistory').click() },
   { label: 'AI 整理分类', run: () => document.getElementById('btnOrganize').click() },
   { label: '导出历史 (CSV/JSON)', run: () => document.getElementById('btnExport').click() },
   { label: '打开设置', run: () => document.getElementById('btnSettings').click() },
@@ -3816,6 +3817,31 @@ async function init() {
     const r = await hub.syncNow();
     setStatus(`同步完成，新增 ${r.inserted} 条`);
     await loadDays();
+  };
+  document.getElementById('cfgCatchUpHistory').onclick = async () => {
+    const btn = document.getElementById('cfgCatchUpHistory');
+    const state = document.getElementById('catchUpState');
+    btn.disabled = true;
+    state.textContent = '正在从头补同步…';
+    setStatus('正在重新同步历史…');
+    try {
+      const r = await hub.catchUpHistory();
+      const n = (r && r.inserted) || 0;
+      const msg = r && r.skipped
+        ? (r.skipped === 'onboarding' ? '请先完成引导后再重新同步' : '当前无法重新同步')
+        : `重新同步完成，新补入 ${n} 条访问`;
+      state.textContent = msg;
+      setStatus(msg);
+      toast(msg);
+      await loadDays();
+    } catch (e) {
+      const msg = '重新同步失败：' + (e && e.message ? e.message : String(e));
+      state.textContent = msg;
+      setStatus(msg);
+      toast(msg);
+    } finally {
+      btn.disabled = false;
+    }
   };
   document.getElementById('btnOrganize').onclick = async () => {
     setStatus('AI 整理中…');

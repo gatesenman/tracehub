@@ -6,6 +6,12 @@ const { Worker } = require('worker_threads');
 const { detectBrowsers, readProfileVisits } = require('./browsers');
 const { resolveHistoryWorkerPath } = require('./paths');
 
+// One-shot (and manually repeatable) full catch-up of visits that still
+// exist in the browser but never made it into the hub. Persisted in meta
+// so an upgrade scan is not restarted from zero on every launch.
+const HISTORY_CATCHUP_META = 'historyCatchUp.v1211';
+const CATCHUP_MAX_ROUNDS = 1000;
+
 // Continuously pulls new visits from all browsers into the unified store.
 // "Real-time" is achieved by watching each history file for changes plus a
 // periodic poll fallback (browser history DBs are file-locked & written in
@@ -215,38 +221,72 @@ class SyncEngine {
   // re-reads (and dedupes) instead of skipping. Without a cursor (first run,
   // or upgrading from <=1.2.8 which kept none) start a little before the
   // newest stored visit, or from the beginning of the browser's history.
+  _catchUpState() {
+    return this.store.getMeta ? this.store.getMeta(HISTORY_CATCHUP_META, '') : '';
+  }
+
+  _catchUpPending() {
+    return this._catchUpState() === 'pending';
+  }
+
+  // Start (or restart) a full scan from the beginning of each browser
+  // history. Existing hub rows are kept; upserts de-dupe. Cursors are
+  // cleared once so paging resumes from a start-of-history cursor, then
+  // advances as pages are written.
+  _beginCatchUpIfNeeded(force) {
+    const state = this._catchUpState();
+    if (!force && state === 'done') return false;
+    if (force || state !== 'pending') {
+      if (this.store.clearAllSyncCursors) this.store.clearAllSyncCursors();
+      if (this.store.setMeta) this.store.setMeta(HISTORY_CATCHUP_META, 'pending');
+    }
+    return true;
+  }
+
   async _syncProfile(browser, profile) {
     let cursor = this.store.getSyncCursor
       ? this.store.getSyncCursor(browser.id, profile.profile)
       : null;
     if (!cursor) {
-      const latest = this.store.latestVisitTime(browser.id, profile.profile);
-      cursor = { visitId: null, visitTime: latest > 0 ? Math.max(0, latest - this.backfillOverlapMs) : 0 };
+      if (this._catchUpPending()) {
+        cursor = { visitId: null, visitTime: 0 };
+      } else {
+        const latest = this.store.latestVisitTime(browser.id, profile.profile);
+        cursor = { visitId: null, visitTime: latest > 0 ? Math.max(0, latest - this.backfillOverlapMs) : 0 };
+      }
     }
     let inserted = 0;
+    let hasMore = false;
     for (let page = 0; page < this.maxPagesPerSync; page++) {
       const res = await this._readVisits(browser, profile, cursor);
       inserted += this.store.upsertVisits(this._filterItems(res.items || []));
       cursor = res.cursor;
+      hasMore = !!res.hasMore;
       if (this.store.setSyncCursor) this.store.setSyncCursor(browser.id, profile.profile, cursor);
-      if (!res.hasMore) break;
+      if (!hasMore) break;
     }
-    return inserted;
+    return { inserted, hasMore };
   }
 
   // full is kept for callers; every sync now backfills from the cursor.
+  // If this build has not finished its once-per-upgrade catch-up, the
+  // first pending sync starts at the beginning of each history file.
   async syncOnce(full) {
     if (this._syncing || !this.running) return { inserted: 0 };
     if (this.isSyncAllowed && !this.isSyncAllowed()) return { inserted: 0, skipped: 'onboarding' };
+    const catchingUp = this._beginCatchUpIfNeeded(false);
     this._syncing = true;
     let inserted = 0;
+    let anyMore = false;
     const errors = [];
     try {
       for (const browser of this.browsers) {
         for (const profile of browser.profiles) {
           if (!this._profileAllowed(browser.id, profile.profile)) continue;
           try {
-            inserted += await this._syncProfile(browser, profile);
+            const res = await this._syncProfile(browser, profile);
+            inserted += res.inserted || 0;
+            if (res.hasMore) anyMore = true;
           } catch (e) {
             errors.push({ browser: browser.id, profile: profile.profile, error: String(e.message || e) });
           }
@@ -257,11 +297,33 @@ class SyncEngine {
     }
     this.lastErrors = errors;
     if (errors.length) console.error('history sync errors:', JSON.stringify(errors));
+    if (catchingUp && !anyMore) {
+      if (this.store.setMeta) this.store.setMeta(HISTORY_CATCHUP_META, 'done');
+    }
     if (inserted > 0) {
       this.onUpdate({ inserted, errors });
     }
-    return { inserted, errors };
+    return { inserted, errors, catchUp: catchingUp, catchUpDone: catchingUp && !anyMore, hasMore: anyMore };
+  }
+
+  // Manual 「重新同步历史」: reset cursors and page from the start until
+  // every enabled profile is exhausted. Safe to run more than once.
+  async catchUpFromStart() {
+    if (!this.running) return { inserted: 0, skipped: 'not-running' };
+    if (this.isSyncAllowed && !this.isSyncAllowed()) return { inserted: 0, skipped: 'onboarding' };
+    this._beginCatchUpIfNeeded(true);
+    let inserted = 0;
+    const errors = [];
+    let last = { inserted: 0, errors: [] };
+    for (let round = 0; round < CATCHUP_MAX_ROUNDS; round++) {
+      last = await this.syncOnce(true);
+      inserted += last.inserted || 0;
+      if (last.errors && last.errors.length) errors.push(...last.errors);
+      if (last.skipped) break;
+      if (this._catchUpState() === 'done') break;
+    }
+    return { inserted, errors, catchUpDone: this._catchUpState() === 'done' };
   }
 }
 
-module.exports = { SyncEngine };
+module.exports = { SyncEngine, HISTORY_CATCHUP_META };
