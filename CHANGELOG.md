@@ -1,5 +1,9 @@
 # 更新日志
 
+## 未发布 — 托盘「暂停 3 分钟」
+
+- 托盘菜单「隐私暂停 30 分钟」改为「暂停 3 分钟」（暂停 3 分钟）。此项及相关按钮、提示、设置说明不再使用「隐私」字样。
+
 ## 1.2.11 — 2026-11-27 跳过空的 Opera / Firefox 历史桩文件，并从浏览器现存历史重新同步丢失的访问
 
 - **修复**：Opera Stable 在用户数据根目录常留一份 0 字节的 `History` 桩文件，真正的访问记在 `Default/History`。1.2.10 会把桩文件也当成 Default，查询 `visits` 表时报 “no such table: visits”，并与真实 Default 抢同一个同步游标。现在只把看起来是 SQLite 数据库的 History（文件头为 `SQLite format 3`、至少 100 字节）当作配置；若已有 `Default/History`，不再使用根目录那份。
